@@ -1,0 +1,175 @@
+.\"/*
+.\" * All rights reserved
+.\" * Copyright (c) 2016 SUSE LINUX GmbH, Nuernberg, Germany.
+.\" * Authors: Howard Guo
+.\" *
+.\" * This program is free software; you can redistribute it and/or
+.\" * modify it under the terms of the GNU General Public License
+.\" * version 3 as published by the Free Software Foundation.
+.\" *
+.\" * This program is distributed in the hope that it will be useful,
+.\" * but WITHOUT ANY WARRANTY; without even the implied warranty of
+.\" * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+.\" * GNU General Public License for more details.
+.\" */
+.\"
+.TH cryptctl "8" "July 2016" "" "Disk encryption"
+.SH NAME
+cryptctl \- Set up LUKS-based disk encryption
+
+.SH SYNOPSIS
+\fBcryptctl\fP init-server
+
+\fBcryptctl\fP list-keys
+
+\fBcryptctl\fP edit-key UUID
+
+\fBcryptctl\fP show-key UUID
+
+\fBcryptctl\fP encrypt
+
+\fBcryptctl\fP online-unlock
+
+\fBcryptctl\fP offline-unlock
+
+\fBcryptctl\fP erase
+
+.SH DESCRIPTION
+.I cryptctl
+is a utility for setting up disk encryption using the popular well-established LUKS method. It generates random numbers
+to use as encryption keys, and safely keep the keys on a centralised key server. It can encrypt arbitrary directories
+into encrypted disk partitions.
+
+The key server stores all encryption keys in a database directory (by default /var/lib/cryptctl/keydb) and serves the
+keys via an RPC protocol over TCP (by default on port 3737) to client computers. The key server is the central component
+of encryption setup, hence it must be deployed with extra physical/network security measures; regular backup of the key
+database must be carried out to ensure its availability. Communication between key server and client computers is
+protected by TLS via a certificate, and authorised via a password specified by the system administrator during key
+server's initial setup.
+
+The encryption routine sets up encrypted file systems using using aes-xts-plain64 cipher, with a fixed-size (512-bit)
+key generated from cryptically secure random pool. Encrypted directories will always be mounted automatically upon
+system boot by retrieving their encryption keys from key server automatically; this operation tolerates temporary
+network failure or key server down time by making continuous attempts until success, for maximum of 24 hours.
+
+The system administrator can define an upper limit number of computers that can get hold of a key simultaneously. After
+a client computer successfully retrieves a key, it will keep reporting back to key server that it is online, and the
+key server closely tracks its IP, host name, and timestamp, in order to determine number of computers actively using
+the key; if the upper limit number of computers is reached, the key will no longer be handed out automatically; system
+administrator can always retrieve encryption keys by using key server's access password.
+
+.SH KEY SERVER ACTIONS
+.SS
+.TP
+.B init-server
+Initialise key server parameters such as password, TLS certificate, Email notifications, etc. This initial setup must
+be carried out before starting the key server.
+.TP
+.B list-keys
+Show all records from key database, sorted according to last usage.
+.TP
+.B edit-key
+Edit usage limitation and mount options of a key record.
+.TP
+.B show-key
+Show key record details such as mount options and current usages.
+
+.SH ENCRYPTION ROUTINE
+On a client computer, calling "cryptctl encrypt" will commence the encryption routine. The workflow will ask user for
+location of key server, key user limit, and other questions. Then pre-encryption checks will be conducted to validate
+the input parameters, and after a final confirmation prompt, encryption routine will start:
+
+.nr step 1 1
+.IP \n[step]
+Wipe the partition to be encrypted.
+.IP \n+[step]
+Generate a 512-bit encryption key from cryptographically secure random source.
+.IP \n+[step]
+Set up LUKS metadata on the partition to encrypt, then make new file system on it, matching the type of that from the
+directory to encrypt.
+.IP \n+[step]
+Copy all files, file attributes, and directories from the directory to encrypt to the new encrypted partition. The
+backup operation is carried out via rsync using an efficient method.
+.IP \n+[step]
+Send RPC request to key server to save the encryption key, along with mount point location and options.
+.IP \n+[step]
+Save key server's information into configuration file (/etc/sysconfig/cryptctl-client) so that after a reboot, encrypted
+disks can be mounted automatically using keys retrieved from the key server.
+.IP \n+[step]
+The key server will send out a notification Email (if enabled) to inform system administrator that the directory has
+been successfully encrypted.
+
+The original un-encrypted data will be moved into a directory with prefix name "cryptctl-moved-", please erase the
+original un-encrypted data after having successfully tested your systems with the now encrypted directory.
+
+.SH UNLOCKING ROUTINE
+Without manual intervention, a client computer will always attempt to automatically unlock encrypted disks upon reboot.
+The process tolerates temporary network failure and key server's down time by making continuous attempts for up to 24
+hours until a key is successfully retrieved. If Email notification is enabled on the key server, the system
+administrator will be informed via Email that a computer has successfully retrieve encryption key(s).
+
+The key server makes sure that upper limit number (defined by user) of computers is not exceeded before handing out the
+keys. System administrator can override the protection by running "cryptctl online-unlock" on the client computer and
+provide key server's access password in the prompt, which will then unconditionally retrieve encryption keys to unlock
+the disks. Consequently the key server will not track key usage from the computer, despite that it is now holding the
+encryption keys.
+
+In normal circumstances, encryption keys are retrieved via network communication. Should the key server become
+unavailable or the communication be cut off, already unlocked file systems will remain mounted, however locked file
+systems will not be able to retrieve encryption keys from the key server. Hence, this manual procedure has been
+designed to allow unlocking of encrypted disks directly from key database record, via physical access to both the key
+server and client computer. This procedure will not trigger Email notification or track key usage.
+
+.nr step 1 1
+.IP \n[step]
+On client computer, identify the encrypted file system's UUID from output of command "lsblk -O" (as root).
+.IP \n+[step]
+On key server, navigate to key database directory (located in /var/lib/cryptctl/keydb by default), copy the key file
+named after UUID onto a removable storage device, such as an SD card.
+.IP \n+[step]
+Transport the key file to the client computer, run "cryptctl offline-unlock", and provide path to the key file in
+prompt.
+.IP \n+[step]
+Re-enter mount point location/options or accept their defaults. The file system is now unlocked and mounted.
+
+.SH COMMUNICATION SECURITY
+The key server and client use TLS (Transport Layer Security) to securely transfer password and disk encryption keys,
+the program always enforces TLS certificate verification before transferring the sensitive data. A key server requires
+exactly one TLS certificate (and associated certificate infrastructure) to operate.
+
+For experimental purposes, you may use a self-signed certificate to operate the key server and client, such certificate
+can be easily generated from command:
+.br
+    openssl req -new -newkey rsa:2048 -days 30 -nodes -x509 -keyout testing.key -out testing.crt
+
+When asked for a "Common Name", enter the fully qualified domain name of key server; after the certificate is generated
+successfully, you may initialise key server using "testing.crt" (certificate file) and "testing.key" (certificate key
+file).
+
+By default, a client only trusts well-known certificate authorities defined in /etc/ssl/ca-bundle.pem. To operate
+the client using the self-signed certificate, transfer the certificate file to client and append the following parameter
+to every operation:
+    -ca=/path/to/testing.crt
+
+If you wish to maintain a certificate infrastructure for multiple key servers in a production environment, the YaST
+Certificate Management program may come in handy.
+
+.SH CHANGE/REVOKE OR DELETE ENCRYPTION KEY
+If you decide to revoke or change encryption key for an encrypted file system, please back up the encrypted data onto a
+disk and re-run the encryption routine in order to encrypt with a new key. The utility does not provide other means to
+revoke or change encryption key.
+
+Destroy an encryption key will render an encrypted file system irreversibly lost, execute "cryptctl erase" on the client
+computer and enter the file system UUID will proceed to erase metadata of the encrypted file system, and then contact
+key server to erase its encryption record as well.
+
+.SH FILES
+.NF
+/etc/sysconfig/cryptctl-server
+
+.NF
+/etc/sysconfig/cryptctl-client
+
+.SH AUTHOR
+.NF
+Howard Guo <hguo@suse.com>
