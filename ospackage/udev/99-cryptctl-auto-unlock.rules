@@ -1,0 +1,1 @@
+ACTION=="add" SUBSYSTEM=="block", TAG+="systemd", ENV{SYSTEMD_WANTS}+="cryptctl-auto-unlock@$env{ID_FS_UUID}.service"

@@ -1,0 +1,93 @@
+## Path:           System/Disk Encryption/Encryption Key Server
+## Description:    Global settings for disk encryption (cryptctl) server daemon
+## ServiceRestart: cryptctl-server
+
+## Type:    string
+## Default: ""
+#
+# Salted hash of password-based authentication of incoming RPC calls. The parameter is constructed automatically
+# by the initial setup routine of cryptctl server, hence avoid editing this parameter manually.
+AUTH_PASSWORD_HASH=""
+
+## Type:    string
+## Default: ""
+#
+# Salt of password-based authentication of incoming RPC calls. The parameter is constructed automatically by the
+# initial setup routine of cryptctl server, hence avoid editing this parameter manually.
+AUTH_PASSWORD_SALT=""
+
+## Type:    string
+## Default: ""
+#
+# Location of PEM-encoded TLS certificate file, this is mandatory.
+TLS_CERT_PEM=""
+
+## Type:    string
+## Default: ""
+#
+# Location of PEM-encoded TLS certificate key file that corresponds to the certificate, this is mandatory.
+TLS_CERT_KEY_PEM=""
+
+## Type:    string
+## Default: "0.0.0.0"
+#
+# Address of the network interface to listen on for incoming key requests.
+LISTEN_ADDRESS="0.0.0.0"
+
+## Type:    integer
+## Default: 3737
+#
+# Port to listen on for incoming key requests.
+LISTEN_PORT=3737
+
+## Type:    string
+## Default: "/var/lib/cryptctl/keydb"
+#
+# Storage location for disk encryption keys and records.
+# Existing keys and records will not be automatically moved to new location if you modify this parameter.
+KEY_DB_DIR="/var/lib/cryptctl/keydb"
+
+## Type:    string
+## Default: ""
+#
+# Notification emails' recipient addresses, separated by spaces.
+# If all Email parameters are filled in, notifications will be sent upon key creation/retrieval events.
+EMAIL_RECIPIENTS=""
+
+## Type:    string
+## Default: ""
+#
+# Notification emails' From address.
+# If all Email parameters are filled in, notifications will be sent upon key creation/retrieval events.
+EMAIL_FROM_ADDRESS=""
+
+## Type:    string
+## Default: ""
+#
+# Mail agent address and port number in the format of "address:port". The address must be fully qualified domain name.
+# If all Email parameters are filled in, notifications will be sent upon key creation/retrieval events.
+EMAIL_AGENT_AND_PORT=""
+
+## Type:    string
+## Default: "A new file system has been encrypted"
+#
+# Subject shown in notification emails sent by key creation events.
+EMAIL_KEY_CREATION_SUBJECT="A new file system has been encrypted"
+
+## Type:    string
+## Default: "The key server now has encryption key for the following file system:"
+#
+# A greeting message shown in notification emails sent by key creation events.
+EMAIL_KEY_CREATION_GREETING="The key server now has encryption key for the following file system:"
+
+## Type:    string
+## Default: "An encrypted file system has been accessed"
+#
+# Subject shown in notification emails sent by key retrieval events.
+EMAIL_KEY_RETRIEVAL_SUBJECT="An encrypted file system has been accessed"
+
+## Type:    string
+## Default: "The key server has given out the following encryption key:"
+#
+# A greeting message shown in notification emails sent by key retrieval events.
+EMAIL_KEY_RETRIEVAL_GREETING="The key server has given out the following encryption key:"

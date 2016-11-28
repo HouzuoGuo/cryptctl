@@ -1,0 +1,17 @@
+[Unit]
+Description=Disk encryption utility (cryptctl) - key server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/cryptctl daemon
+User=root
+Group=root
+WorkingDirectory=/
+PrivateTmp=true
+RestartSec=5
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target

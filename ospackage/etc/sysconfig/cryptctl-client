@@ -1,0 +1,22 @@
+## Path:           System/Disk Encryption/Network Key Client
+## Description:    Global settings for disk encryption (cryptctl) network key client
+
+## Type:    string
+## Default: ""
+#
+# In the automatic routine that unlocks disks, contact this server (host name) to ask for encryption keys.
+# This host name must match the host name of TLS certificate presented by the key server.
+KEY_SERVER_HOST=""
+
+## Type:    integer
+## Default: 3737
+#
+# In the automatic routine that unlocks disks, contact key server on this port number to ask for encryption keys.
+KEY_SERVER_PORT=3737
+
+## Type:    string
+## Default: ""
+#
+# (Optional) path to PEM-encoded custom certificate authority that issued the TLS certificate for the key server.
+# Leave empty if the TLS certificate was issued by a well-known certificate authority.
+TLS_CA_PEM=""

@@ -1,0 +1,11 @@
+[Unit]
+Description=Disk encryption utility (cryptctl) - contact key server to unlock disk %i and keep the server informed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/cryptctl auto-unlock %i
+User=root
+Group=root
+WorkingDirectory=/
