@@ -1,24 +1,7 @@
 package ttlv
 
-import (
-	"encoding/hex"
-	"reflect"
-	"testing"
-)
-
-func TestRoundUpTo8(t *testing.T) {
-	if i := RoundUpTo8(1); i != 8 {
-		t.Fatal(i)
-	}
-	if i := RoundUpTo8(8); i != 8 {
-		t.Fatal(i)
-	}
-	if i := RoundUpTo8(9); i != 16 {
-		t.Fatal(i)
-	}
-}
-
-var createRequest = WiresharkDumpToBytes(`0000   42 00 78 01 00 00 01 a8 42 00 77 01 00 00 00 80
+var SampleCreateRequest = WiresharkDumpToBytes(`
+0000   42 00 78 01 00 00 01 a8 42 00 77 01 00 00 00 80
 0010   42 00 69 01 00 00 00 20 42 00 6a 02 00 00 00 04
 0020   00 00 00 01 00 00 00 00 42 00 6b 02 00 00 00 04
 0030   00 00 00 02 00 00 00 00 42 00 0c 01 00 00 00 40
@@ -46,7 +29,8 @@ var createRequest = WiresharkDumpToBytes(`0000   42 00 78 01 00 00 01 a8 42 00 7
 0190   42 00 55 07 00 00 00 07 41 45 53 4b 65 79 31 00
 01a0   42 00 54 05 00 00 00 04 00 00 00 01 00 00 00 00`)
 
-var createResponse = WiresharkDumpToBytes(`0000   42 00 7b 01 00 00 00 a0 42 00 7a 01 00 00 00 48
+var SampleCreateResponse = WiresharkDumpToBytes(`
+0000   42 00 7b 01 00 00 00 a0 42 00 7a 01 00 00 00 48
 0010   42 00 69 01 00 00 00 20 42 00 6a 02 00 00 00 04
 0020   00 00 00 01 00 00 00 00 42 00 6b 02 00 00 00 04
 0030   00 00 00 02 00 00 00 00 42 00 92 09 00 00 00 08
@@ -58,7 +42,8 @@ var createResponse = WiresharkDumpToBytes(`0000   42 00 7b 01 00 00 00 a0 42 00 
 0090   00 00 00 02 00 00 00 00 42 00 94 07 00 00 00 01
 00a0   31 00 00 00 00 00 00 00`)
 
-var getRequest = WiresharkDumpToBytes(`0000   42 00 78 01 00 00 00 b8 42 00 77 01 00 00 00 80
+var SampleGetRequest = WiresharkDumpToBytes(`
+0000   42 00 78 01 00 00 00 b8 42 00 77 01 00 00 00 80
 0010   42 00 69 01 00 00 00 20 42 00 6a 02 00 00 00 04
 0020   00 00 00 01 00 00 00 00 42 00 6b 02 00 00 00 04
 0030   00 00 00 02 00 00 00 00 42 00 0c 01 00 00 00 40
@@ -71,7 +56,8 @@ var getRequest = WiresharkDumpToBytes(`0000   42 00 78 01 00 00 00 b8 42 00 77 0
 00a0   00 00 00 0a 00 00 00 00 42 00 79 01 00 00 00 10
 00b0   42 00 94 07 00 00 00 01 31 00 00 00 00 00 00 00`)
 
-var getResponse = WiresharkDumpToBytes(`0000   42 00 7b 01 00 00 01 00 42 00 7a 01 00 00 00 48
+var SampleGetResponse = WiresharkDumpToBytes(`
+0000   42 00 7b 01 00 00 01 00 42 00 7a 01 00 00 00 48
 0010   42 00 69 01 00 00 00 20 42 00 6a 02 00 00 00 04
 0020   00 00 00 01 00 00 00 00 42 00 6b 02 00 00 00 04
 0030   00 00 00 02 00 00 00 00 42 00 92 09 00 00 00 08
@@ -89,7 +75,8 @@ var getResponse = WiresharkDumpToBytes(`0000   42 00 7b 01 00 00 01 00 42 00 7a 
 00f0   00 00 00 03 00 00 00 00 42 00 2a 02 00 00 00 04
 0100   00 00 00 80 00 00 00 00`)
 
-var destroyRequest = WiresharkDumpToBytes(`0000   42 00 78 01 00 00 00 b8 42 00 77 01 00 00 00 80
+var SampleDestroyRequest = WiresharkDumpToBytes(`
+0000   42 00 78 01 00 00 00 b8 42 00 77 01 00 00 00 80
 0010   42 00 69 01 00 00 00 20 42 00 6a 02 00 00 00 04
 0020   00 00 00 01 00 00 00 00 42 00 6b 02 00 00 00 04
 0030   00 00 00 02 00 00 00 00 42 00 0c 01 00 00 00 40
@@ -102,7 +89,8 @@ var destroyRequest = WiresharkDumpToBytes(`0000   42 00 78 01 00 00 00 b8 42 00 
 00a0   00 00 00 14 00 00 00 00 42 00 79 01 00 00 00 10
 00b0   42 00 94 07 00 00 00 01 31 00 00 00 00 00 00 00`)
 
-var destroyResponse = WiresharkDumpToBytes(`0000   42 00 7b 01 00 00 00 90 42 00 7a 01 00 00 00 48
+var SampleDestroyResponse = WiresharkDumpToBytes(`
+0000   42 00 7b 01 00 00 00 90 42 00 7a 01 00 00 00 48
 0010   42 00 69 01 00 00 00 20 42 00 6a 02 00 00 00 04
 0020   00 00 00 01 00 00 00 00 42 00 6b 02 00 00 00 04
 0030   00 00 00 02 00 00 00 00 42 00 92 09 00 00 00 08
@@ -112,16 +100,3 @@ var destroyResponse = WiresharkDumpToBytes(`0000   42 00 7b 01 00 00 00 90 42 00
 0070   42 00 7f 05 00 00 00 04 00 00 00 00 00 00 00 00
 0080   42 00 7c 01 00 00 00 10 42 00 94 07 00 00 00 01
 0090   31 00 00 00 00 00 00 00`)
-
-func TestEncodeDecode(t *testing.T) {
-	for i, data := range [][]byte{createRequest, createResponse, getRequest, getResponse, destroyRequest, destroyResponse} {
-		decoded, decodedLength, err := DecodeAny(data)
-		if err != nil {
-			t.Fatal(err)
-		}
-		encoded, encodedLength := EncodeAny(decoded)
-		if encodedLength != decodedLength || !reflect.DeepEqual(data, encoded) {
-			t.Fatalf("Mismatch in %d:\n%s\n\n%s\n", i, hex.Dump(data), hex.Dump(encoded))
-		}
-	}
-}

@@ -4,85 +4,14 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"reflect"
 	"strings"
 	"time"
 )
-
-const (
-	TypStruct    = 0x1
-	TypInt       = 0x2
-	TypLong      = 0x3
-	TypeEnum     = 0x5
-	TypeText     = 0x7
-	TypeBytes    = 0x8
-	TypeDateTime = 0x9
-	LenTTL       = 3 + 1 + 4 // 3 bytes of tag, 1 byte of type, 4 bytes of length
-)
-
-type Tag [3]byte // The tag of TTLV consists of three bytes
-
-// Tag, type, and value length excluding padding.
-type TTL struct {
-	Tag    Tag
-	Typ    byte
-	Length int
-}
-
-// Return tag, type, and length in a string.
-func (com TTL) String() string {
-	return fmt.Sprintf("TAG %s TYP %d LEN %d", hex.EncodeToString(com.Tag[:]), com.Typ, com.Length)
-}
-
-// Write tag bytes and type byte into the buffer.
-func (com TTL) WriteTo(out *bytes.Buffer) {
-	out.Write(com.Tag[:])
-	out.WriteByte(com.Typ)
-}
-
-// TTLV structure. Length of value is sum of item lengths including padding.
-type Structure struct {
-	TTL
-	Items []interface{}
-}
-
-// TTLV integer. Length of value is 4. Representation comes with 4 additional bytes of padding.
-type Integer struct {
-	TTL
-	Value int32
-}
-
-// TTLV long integer. Length of value is 8.
-type LongInteger struct {
-	TTL
-	Value int64
-}
-
-// TTLV enumeration. Length of value is 4. Representation comes with 4 additional bytes of padding.
-type Enumeration struct {
-	TTL
-	Value int32
-}
-
-// TTLV date time - seconds since Unix epoch represented as LongInteger. Length of value is 8.
-type DateTime struct {
-	TTL
-	Time time.Time
-}
-
-// TTLV text string. Length of value is actual string length, but representation is padded to align with 8 bytes.
-type Text struct {
-	TTL
-	Value string
-}
-
-// TTLV byte array. Length of value is actual array length, but representation is padded to align with 8 bytes.
-type Bytes struct {
-	TTL
-	Value []byte
-}
 
 // Round input integer upward to be divisible by 8.
 func RoundUpTo8(in int) int {
@@ -96,6 +25,9 @@ func RoundUpTo8(in int) int {
 func WiresharkDumpToBytes(in string) []byte {
 	var bufStr bytes.Buffer
 	for _, line := range strings.Split(in, "\n") {
+		if line == "" {
+			continue
+		}
 		bufStr.WriteString(strings.Replace(line[7:], " ", "", -1))
 	}
 	ret, err := hex.DecodeString(bufStr.String())
@@ -106,7 +38,7 @@ func WiresharkDumpToBytes(in string) []byte {
 	return ret
 }
 
-// Generate a string that describes an item in very detail. If the item is a structure, the output descends into the child items too.
+// Generate a string that describes an item (pointer) in very detail. If the item is a structure, the output descends into the child items too.
 func DebugTTLVItem(indent int, entity interface{}) string {
 	var ret bytes.Buffer
 	ret.WriteString(strings.Repeat(" ", indent))
@@ -114,28 +46,28 @@ func DebugTTLVItem(indent int, entity interface{}) string {
 		ret.WriteString("(nil)")
 	} else {
 		switch t := entity.(type) {
-		case Structure:
+		case *Structure:
 			ret.WriteString(t.TTL.String())
 			ret.WriteRune('\n')
 			for _, item := range t.Items {
 				ret.WriteString(DebugTTLVItem(indent+4, item))
 			}
-		case Integer:
+		case *Integer:
 			ret.WriteString(fmt.Sprintf("%s - %d", t.TTL.String(), t.Value))
 			ret.WriteRune('\n')
-		case LongInteger:
+		case *LongInteger:
 			ret.WriteString(fmt.Sprintf("%s - %d", t.TTL.String(), t.Value))
 			ret.WriteRune('\n')
-		case DateTime:
+		case *DateTime:
 			ret.WriteString(fmt.Sprintf("%s - %s", t.TTL.String(), t.Time.Format(time.RFC3339)))
 			ret.WriteRune('\n')
-		case Enumeration:
+		case *Enumeration:
 			ret.WriteString(fmt.Sprintf("%s - %d", t.TTL.String(), t.Value))
 			ret.WriteRune('\n')
-		case Text:
+		case *Text:
 			ret.WriteString(fmt.Sprintf("%s - %s", t.TTL.String(), t.Value))
 			ret.WriteRune('\n')
-		case Bytes:
+		case *Bytes:
 			ret.WriteString(fmt.Sprintf("%s - %s", t.TTL.String(), hex.EncodeToString(t.Value)))
 			ret.WriteRune('\n')
 		default:
@@ -155,69 +87,56 @@ func EncodeIntBigEndian(someInt interface{}) []byte {
 	return buf.Bytes()
 }
 
-func EncodeAny(thing interface{}) (ret []byte, length int) {
+// Encode any TTLV item. Input must be pointer to item.
+func EncodeAny(thing interface{}) (ret []byte) {
 	buf := new(bytes.Buffer)
 	switch t := thing.(type) {
-	case Structure:
-		t.TTL.WriteTo(buf)
-		// Collect items while calculating total length
-		itemsBuf := new(bytes.Buffer)
+	case *Structure:
+		t.TTL.WriteTTTo(buf)
+		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		for _, item := range t.Items {
-			encodedItem, itemLength := EncodeAny(item)
-			length += LenTTL + itemLength
-			itemsBuf.Write(encodedItem)
+			buf.Write(EncodeAny(item))
 		}
-		buf.Write(EncodeIntBigEndian(int32(length)))
-		buf.Write(itemsBuf.Bytes())
-	case Integer:
-		t.TTL.WriteTo(buf)
+	case *Integer:
+		t.TTL.WriteTTTo(buf)
+		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		// Integer has length of 4
-		buf.Write(EncodeIntBigEndian(int32(4)))
 		buf.Write(EncodeIntBigEndian(t.Value))
 		// An additional 4 bytes of padding not counted against length
-		length = 8
 		buf.Write([]byte{0, 0, 0, 0})
-	case LongInteger:
-		t.TTL.WriteTo(buf)
+	case *LongInteger:
+		t.TTL.WriteTTTo(buf)
+		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		// LongInteger has length of 8
-		length = 8
-		buf.Write(EncodeIntBigEndian(int32(8)))
 		buf.Write(EncodeIntBigEndian(t.Value))
-	case Enumeration:
-		t.TTL.WriteTo(buf)
+	case *Enumeration:
+		t.TTL.WriteTTTo(buf)
+		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		// Enumeration has length of 4
-		buf.Write(EncodeIntBigEndian(int32(4)))
 		buf.Write(EncodeIntBigEndian(t.Value))
 		// An additional 4 bytes of padding not counted against length
-		length = 8
 		buf.Write([]byte{0, 0, 0, 0})
-	case DateTime:
-		t.TTL.WriteTo(buf)
+	case *DateTime:
+		t.TTL.WriteTTTo(buf)
+		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		// DateTime has length of 8
-		length = 8
-		buf.Write(EncodeIntBigEndian(int32(8)))
 		buf.Write(EncodeIntBigEndian(t.Time.Unix()))
-	case Text:
-		t.TTL.WriteTo(buf)
-		// String length is actual length
-		buf.Write(EncodeIntBigEndian(int32(len(t.Value))))
+	case *Text:
+		t.TTL.WriteTTTo(buf)
+		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		buf.Write([]byte(t.Value))
 		// Pad with zero bytes to line up with 8
-		length = RoundUpTo8(len(t.Value))
-		padding := make([]byte, length-len(t.Value))
+		padding := make([]byte, RoundUpTo8(len(t.Value))-len(t.Value))
 		buf.Write(padding)
-	case Bytes:
-		t.TTL.WriteTo(buf)
-		// Bytes length is actual length
-		length = len(t.Value)
-		buf.Write(EncodeIntBigEndian(int32(len(t.Value))))
+	case *Bytes:
+		t.TTL.WriteTTTo(buf)
+		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		buf.Write(t.Value)
 		// Pad with zero bytes to line up with 8
-		length = RoundUpTo8(len(t.Value))
-		padding := make([]byte, length-len(t.Value))
+		padding := make([]byte, RoundUpTo8(len(t.Value))-len(t.Value))
 		buf.Write(padding)
 	}
-	return buf.Bytes(), length
+	return buf.Bytes()
 }
 
 // Decode tag, type, and original value length excluding padding from the first several bytes of input buffer.
@@ -232,8 +151,8 @@ func DecodeTTL(in []byte) (tag Tag, typ byte, length int32, err error) {
 	return
 }
 
-// Decode any TTLV item and return.
-func DecodeAny(in []byte) (ret interface{}, length int, err error) {
+// Decode any TTLV item and return pointer to item.
+func DecodeAny(in []byte) (ret Item, length int, err error) {
 	tag, typ, length32, err := DecodeTTL(in)
 	length = int(length32)
 	if err == io.EOF {
@@ -250,7 +169,7 @@ func DecodeAny(in []byte) (ret interface{}, length int, err error) {
 	case TypeEnum:
 		// Value length is defined at 4, but representation uses 8 bytes.
 		length = 8
-		enum := Enumeration{TTL: common}
+		enum := &Enumeration{TTL: common}
 		if err := binary.Read(bytes.NewReader(in[:4]), binary.BigEndian, &enum.Value); err != nil {
 			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.String(), err)
 		}
@@ -258,21 +177,21 @@ func DecodeAny(in []byte) (ret interface{}, length int, err error) {
 	case TypInt:
 		// Value length is defined at 4, but representation uses 8 bytes.
 		length = 8
-		integer := Integer{TTL: common}
+		integer := &Integer{TTL: common}
 		if err := binary.Read(bytes.NewReader(in[:4]), binary.BigEndian, &integer.Value); err != nil {
 			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.String(), err)
 		}
 		ret = integer
 	case TypLong:
 		length = 8
-		long := LongInteger{TTL: common}
+		long := &LongInteger{TTL: common}
 		if err := binary.Read(bytes.NewReader(in[:8]), binary.BigEndian, &long.Value); err != nil {
 			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.String(), err)
 		}
 		ret = long
 	case TypStruct:
 		in = in[:length]
-		structure := Structure{TTL: common, Items: make([]interface{}, 0, 4)}
+		structure := &Structure{TTL: common, Items: make([]interface{}, 0, 4)}
 		itemIndex := 0
 		for {
 			// Decode item at current index
@@ -292,12 +211,12 @@ func DecodeAny(in []byte) (ret interface{}, length int, err error) {
 		ret = structure
 	case TypeText:
 		// Length in TTL is true string length, excluding padding.
-		ret = Text{TTL: common, Value: string(in[:length])}
+		ret = &Text{TTL: common, Value: string(in[:length])}
 		// Value length is true string length, but representation may contain padding to be divisible by 8.
 		length = RoundUpTo8(length)
 	case TypeBytes:
 		// Length in TTL is true string length, excluding padding.
-		ret = Bytes{TTL: common, Value: in[:length]}
+		ret = &Bytes{TTL: common, Value: in[:length]}
 		// Value length is true string length, but representation may contain padding to be divisible by 8.
 		length = RoundUpTo8(length)
 	case TypeDateTime:
@@ -306,9 +225,62 @@ func DecodeAny(in []byte) (ret interface{}, length int, err error) {
 		if err := binary.Read(bytes.NewReader(in[:8]), binary.BigEndian, &longInt); err != nil {
 			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.String(), err)
 		}
-		ret = DateTime{TTL: common, Time: time.Unix(longInt, 0)}
+		ret = &DateTime{TTL: common, Time: time.Unix(longInt, 0)}
 	default:
 		return nil, length, fmt.Errorf("DecodeAny: does not know how to decode %s's type", common.String())
 	}
 	return
+}
+
+// Copy value of a primitive TTLV item from src to dest. Both src and dest are pointers.
+func CopyValue(dest, src Item) error {
+	if src == nil {
+		return errors.New("CopyValue: source value may not be nil")
+	}
+	if dest == nil {
+		return errors.New("CopyValue: destination value may not be nil")
+	}
+	typeErr := fmt.Errorf("CopyValue: was expecting destination to be of type %s, but it is %s.", reflect.TypeOf(src).String(), reflect.TypeOf(dest).String())
+	switch t := src.(type) {
+	case *Integer:
+		if tDest, yes := dest.(*Integer); yes {
+			tDest.Value = t.Value
+		} else {
+			return typeErr
+		}
+	case *LongInteger:
+		if tDest, yes := dest.(*LongInteger); yes {
+			tDest.Value = t.Value
+		} else {
+			return typeErr
+		}
+	case *Enumeration:
+		if tDest, yes := dest.(*Enumeration); yes {
+			tDest.Value = t.Value
+		} else {
+			return typeErr
+		}
+	case *DateTime:
+		if tDest, yes := dest.(*DateTime); yes {
+			tDest.Time = t.Time
+		} else {
+			return typeErr
+		}
+	case *Text:
+		if tDest, yes := dest.(*Text); yes {
+			tDest.Value = t.Value
+		} else {
+			return typeErr
+		}
+	case *Bytes:
+		if tDest, yes := dest.(*Bytes); yes {
+			tDest.Value = make([]byte, len(t.Value))
+			copy(tDest.Value, t.Value)
+		} else {
+			return typeErr
+		}
+	default:
+		return fmt.Errorf("CopyValue: unknown source value type %s", reflect.TypeOf(src).String())
+	}
+	return nil
 }
