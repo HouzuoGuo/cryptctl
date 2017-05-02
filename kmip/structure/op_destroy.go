@@ -1,6 +1,9 @@
 package structure
 
-import "github.com/HouzuoGuo/cryptctl/kmip/ttlv"
+import (
+	"fmt"
+	"github.com/HouzuoGuo/cryptctl/kmip/ttlv"
+)
 
 // KMIP request message 420078
 type SDestroyRequest struct {
@@ -8,7 +11,7 @@ type SDestroyRequest struct {
 	SRequestBatchItem SRequestBatchItem // payload is SRequestPayloadDestroy
 }
 
-func (destroyReq *SDestroyRequest) SerialiseToTTLV() ttlv.Item {
+func (destroyReq SDestroyRequest) SerialiseToTTLV() ttlv.Item {
 	destroyReq.SRequestHeader.IBatchCount.Value = 1
 	ret := ttlv.NewStructure(TagRequestMessage, destroyReq.SRequestHeader.SerialiseToTTLV(), destroyReq.SRequestBatchItem.SerialiseToTTLV())
 	return ret
@@ -16,7 +19,12 @@ func (destroyReq *SDestroyRequest) SerialiseToTTLV() ttlv.Item {
 func (destroyReq *SDestroyRequest) DeserialiseFromTTLV(in ttlv.Item) error {
 	if err := DecodeStructItem(in, TagRequestMessage, TagRequestHeader, &destroyReq.SRequestHeader); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagRequestMessage, TagBatchItem, &destroyReq.SRequestBatchItem); err != nil {
+	}
+	if val := destroyReq.SRequestHeader.IBatchCount.Value; val != 1 {
+		return fmt.Errorf("SDestroyRequest.DeserialiseFromTTLV: was expecting exactly 1 item, but received %d instead.", val)
+	}
+	destroyReq.SRequestBatchItem = SRequestBatchItem{SRequestPayload: &SRequestPayloadDestroy{}}
+	if err := DecodeStructItem(in, TagRequestMessage, TagBatchItem, &destroyReq.SRequestBatchItem); err != nil {
 		return err
 	}
 	return nil
@@ -27,7 +35,7 @@ type SRequestPayloadDestroy struct {
 	TUniqueID ttlv.Text // 420094
 }
 
-func (deletePayload *SRequestPayloadDestroy) SerialiseToTTLV() ttlv.Item {
+func (deletePayload SRequestPayloadDestroy) SerialiseToTTLV() ttlv.Item {
 	deletePayload.TUniqueID.Tag = TagUniqueID
 	return ttlv.NewStructure(TagRequestPayload, &deletePayload.TUniqueID)
 }
@@ -40,34 +48,39 @@ func (deletePayload *SRequestPayloadDestroy) DeserialiseFromTTLV(in ttlv.Item) e
 
 // KMIP response message 42007b
 type SDestroyResponse struct {
-	SHeader            SResponseHeader    // IBatchCount is assumed to be 1 in serialisation operations
-	SResponseBatchItem SResponseBatchItem // payload is SResponsePayloadDelete
+	SResponseHeader    SResponseHeader    // IBatchCount is assumed to be 1 in serialisation operations
+	SResponseBatchItem SResponseBatchItem // payload is SResponsePayloadDestroy
 }
 
-func (destroyResp *SDestroyResponse) SerialiseToTTLV() ttlv.Item {
-	destroyResp.SHeader.IBatchCount.Value = 1
-	ret := ttlv.NewStructure(TagResponseMessage, destroyResp.SHeader.SerialiseToTTLV(), destroyResp.SResponseBatchItem.SerialiseToTTLV())
+func (destroyResp SDestroyResponse) SerialiseToTTLV() ttlv.Item {
+	destroyResp.SResponseHeader.IBatchCount.Value = 1
+	ret := ttlv.NewStructure(TagResponseMessage, destroyResp.SResponseHeader.SerialiseToTTLV(), destroyResp.SResponseBatchItem.SerialiseToTTLV())
 	return ret
 }
 func (destroyResp *SDestroyResponse) DeserialiseFromTTLV(in ttlv.Item) error {
-	if err := DecodeStructItem(in, TagResponseMessage, TagResponseHeader, &destroyResp.SHeader); err != nil {
+	if err := DecodeStructItem(in, TagResponseMessage, TagResponseHeader, &destroyResp.SResponseHeader); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagResponseMessage, TagBatchItem, &destroyResp.SResponseBatchItem); err != nil {
+	}
+	if val := destroyResp.SResponseHeader.IBatchCount.Value; val != 1 {
+		return fmt.Errorf("SDestroyResponse.DeserialiseFromTTLV: was expecting exactly 1 item, but received %d instead.", val)
+	}
+	destroyResp.SResponseBatchItem = SResponseBatchItem{SResponsePayload: &SResponsePayloadDestroy{}}
+	if err := DecodeStructItem(in, TagResponseMessage, TagBatchItem, &destroyResp.SResponseBatchItem); err != nil {
 		return err
 	}
 	return nil
 }
 
-// 42007c - response payload from a delete response
-type SResponsePayloadDelete struct {
+// 42007c - response payload from a destroy response
+type SResponsePayloadDestroy struct {
 	TUniqueID ttlv.Text // 420094
 }
 
-func (deletePayload *SResponsePayloadDelete) SerialiseToTTLV() ttlv.Item {
+func (deletePayload SResponsePayloadDestroy) SerialiseToTTLV() ttlv.Item {
 	deletePayload.TUniqueID.Tag = TagUniqueID
 	return ttlv.NewStructure(TagResponsePayload, &deletePayload.TUniqueID)
 }
-func (deletePayload *SResponsePayloadDelete) DeserialiseFromTTLV(in ttlv.Item) error {
+func (deletePayload *SResponsePayloadDestroy) DeserialiseFromTTLV(in ttlv.Item) error {
 	if err := DecodeStructItem(in, TagResponsePayload, TagUniqueID, &deletePayload.TUniqueID); err != nil {
 		return err
 	}

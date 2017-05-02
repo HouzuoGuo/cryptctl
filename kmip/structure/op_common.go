@@ -8,6 +8,7 @@ import (
 	"reflect"
 )
 
+// Match input structure pointer against expected structure tag, then look for an item with matching item tag and return.
 func FindStructItem(structPtr ttlv.Item, structTag, itemTag ttlv.Tag) (ttlv.Item, error) {
 	if structPtr == nil {
 		return nil, errors.New("FindStructItem: structPtr is nil")
@@ -65,10 +66,13 @@ func DecodeStructItem(structPtr ttlv.Item, structTag, itemTag ttlv.Tag, serialsa
 		return fmt.Errorf("DecodeStructItem: cannot find an item with tag %s in structure %s", hex.EncodeToString(itemTag[:]), hex.EncodeToString(st.Tag[:]))
 	}
 	switch receiver := serialsableOrTTLVItemPtr.(type) {
+	case *SerialisedItem:
+		derefReceiver := *receiver
+		return derefReceiver.DeserialiseFromTTLV(matchedItem)
 	case SerialisedItem:
 		return receiver.DeserialiseFromTTLV(matchedItem)
 	case ttlv.Item:
-		return ttlv.CopyValue(receiver, matchedItem)
+		return ttlv.CopyPrimitive(receiver, matchedItem)
 	default:
 		return fmt.Errorf("DecodeStructItem: does not know how to decode into receiver of type %s", reflect.TypeOf(serialsableOrTTLVItemPtr).String())
 	}
@@ -97,17 +101,20 @@ func DecodeStructItems(structPtr ttlv.Item, structTag, itemTag ttlv.Tag, makeRec
 		}
 		ttlvItem := item.(ttlv.Item)
 		if ttlvItem.GetTTL().Tag == itemTag {
+			var err error
 			serialsableOrTTLVItemPtr := makeReceiver()
 			switch receiver := serialsableOrTTLVItemPtr.(type) {
 			case SerialisedItem:
-				return receiver.DeserialiseFromTTLV(ttlvItem)
+				err = receiver.DeserialiseFromTTLV(ttlvItem)
 			case ttlv.Item:
-				return ttlv.CopyValue(receiver, ttlvItem)
+				err = ttlv.CopyPrimitive(receiver, ttlvItem)
 			default:
-				return fmt.Errorf("DecodeStructItems: does not know how to decode into receiver of type %s", reflect.TypeOf(serialsableOrTTLVItemPtr).String())
+				err = fmt.Errorf("DecodeStructItems: does not know how to decode into receiver of type %s", reflect.TypeOf(serialsableOrTTLVItemPtr).String())
+			}
+			if err != nil {
+				return err
 			}
 			afterReceiver(serialsableOrTTLVItemPtr)
-			break
 		}
 	}
 	return nil
@@ -126,7 +133,7 @@ type SRequestHeader struct {
 	IBatchCount      ttlv.Integer // 42000d
 }
 
-func (header *SRequestHeader) SerialiseToTTLV() ttlv.Item {
+func (header SRequestHeader) SerialiseToTTLV() ttlv.Item {
 	header.IBatchCount.Tag = TagBatchCount
 	return ttlv.NewStructure(
 		TagRequestHeader,
@@ -152,7 +159,7 @@ type SProtocolVersion struct {
 	IMinor ttlv.Integer // 42006b
 }
 
-func (ver *SProtocolVersion) SerialiseToTTLV() ttlv.Item {
+func (ver SProtocolVersion) SerialiseToTTLV() ttlv.Item {
 	ver.IMajor.Tag = TagProtocolVersionMajor
 	ver.IMinor.Tag = TagProtocolVersionMinor
 	return ttlv.NewStructure(
@@ -175,7 +182,7 @@ type SAuthentication struct {
 	SCredential SCredential
 }
 
-func (auth *SAuthentication) SerialiseToTTLV() ttlv.Item {
+func (auth SAuthentication) SerialiseToTTLV() ttlv.Item {
 	return ttlv.NewStructure(TagAuthentication, auth.SCredential.SerialiseToTTLV())
 }
 
@@ -192,10 +199,10 @@ type SCredential struct {
 	SCredentialValue SCredentialValueUsernamePassword
 }
 
-func (cred *SCredential) SerialiseToTTLV() ttlv.Item {
+func (cred SCredential) SerialiseToTTLV() ttlv.Item {
 	cred.ICredentialType.Tag = TagCredentialType
 	cred.ICredentialType.Value = 1 // username + password
-	return ttlv.NewStructure(TagCredential, cred.SCredentialValue.SerialiseToTTLV())
+	return ttlv.NewStructure(TagCredential, &cred.ICredentialType, cred.SCredentialValue.SerialiseToTTLV())
 }
 
 func (cred *SCredential) DeserialiseFromTTLV(in ttlv.Item) error {
@@ -213,7 +220,7 @@ type SCredentialValueUsernamePassword struct {
 	SPassword ttlv.Text // 4200a1
 }
 
-func (pass *SCredentialValueUsernamePassword) SerialiseToTTLV() ttlv.Item {
+func (pass SCredentialValueUsernamePassword) SerialiseToTTLV() ttlv.Item {
 	pass.SUsername.Tag = TagUsername
 	pass.SPassword.Tag = TagPassword
 	return ttlv.NewStructure(TagCredentialValue, &pass.SUsername, &pass.SPassword)
@@ -234,34 +241,19 @@ type SRequestBatchItem struct {
 	SRequestPayload SerialisedItem   // reference to any 420079
 }
 
-func (batchItem *SRequestBatchItem) SerialiseToTTLV() ttlv.Item {
-	batchItem.EOperation.Tag = TagOperation
+func (reqItem SRequestBatchItem) SerialiseToTTLV() ttlv.Item {
+	reqItem.EOperation.Tag = TagOperation
 	return ttlv.NewStructure(
 		TagBatchItem,
-		&batchItem.EOperation,
-		batchItem.SRequestPayload.(SerialisedItem).SerialiseToTTLV())
+		&reqItem.EOperation,
+		reqItem.SRequestPayload.SerialiseToTTLV())
 }
 
-func (batchItem *SRequestBatchItem) DeserialiseFromTTLV(in ttlv.Item) error {
-	if err := DecodeStructItem(in, TagBatchItem, TagOperation, &batchItem.EOperation); err != nil {
+func (reqItem *SRequestBatchItem) DeserialiseFromTTLV(in ttlv.Item) error {
+	if err := DecodeStructItem(in, TagBatchItem, TagOperation, &reqItem.EOperation); err != nil {
 		return err
-	}
-	// Request payload is trickier to decode, there is a limited number of options.
-	create := SRequestPayloadCreate{}
-	destroy := SRequestPayloadDestroy{}
-	get := SRequestPayloadGet{}
-	// Brute force to see which one successfully decodes
-	var success bool
-	for _, payloadPtr := range []SerialisedItem{&create, &destroy, &get} {
-		if err := DecodeStructItem(in, TagBatchItem, TagRequestPayload, payloadPtr); err == nil {
-			success = true
-			break
-		} else {
-			fmt.Println("Failed to decode request payload - ", err)
-		}
-	}
-	if !success {
-		return errors.New("SRequestBatchItem.DeserialiseFromTTLV: payload type is unknown")
+	} else if err := DecodeStructItem(in, TagBatchItem, TagRequestPayload, &reqItem.SRequestPayload); err != nil {
+		return err
 	}
 	return nil
 }
@@ -271,10 +263,10 @@ type STemplateAttribute struct {
 	Attributes []SAttribute
 }
 
-func (tattr *STemplateAttribute) SerialiseToTTLV() ttlv.Item {
+func (tattr STemplateAttribute) SerialiseToTTLV() ttlv.Item {
 	ret := ttlv.NewStructure(TagTemplateAttribute)
 	for _, attr := range tattr.Attributes {
-		ret.Items = append(ret.Items, attr.SerialiseToTTLV())
+		ret.Items = append(ret.Items, (&attr).SerialiseToTTLV())
 	}
 	return ret
 }
@@ -287,7 +279,11 @@ func (tattr *STemplateAttribute) DeserialiseFromTTLV(in ttlv.Item) error {
 	afterReceiver := func(in interface{}) {
 		attrs = append(attrs, *in.(*SAttribute))
 	}
-	return DecodeStructItems(in, TagTemplateAttribute, TagAttribute, makeReceiver, afterReceiver)
+	if err := DecodeStructItems(in, TagTemplateAttribute, TagAttribute, makeReceiver, afterReceiver); err != nil {
+		return err
+	}
+	tattr.Attributes = attrs
+	return nil
 }
 
 // 420008
@@ -296,7 +292,7 @@ type SAttribute struct {
 	AttributeValue ttlv.Item // reference to any TTLV item
 }
 
-func (attr *SAttribute) SerialiseToTTLV() ttlv.Item {
+func (attr SAttribute) SerialiseToTTLV() ttlv.Item {
 	attr.TAttributeName.Tag = TagAttributeName
 	return ttlv.NewStructure(TagAttribute, &attr.TAttributeName, attr.AttributeValue)
 }
@@ -317,7 +313,7 @@ type SResponseHeader struct {
 	IBatchCount ttlv.Integer  // 42000d
 }
 
-func (respHeader *SResponseHeader) SerialiseToTTLV() ttlv.Item {
+func (respHeader SResponseHeader) SerialiseToTTLV() ttlv.Item {
 	respHeader.TTimestamp.Tag = TagTimestamp
 	respHeader.IBatchCount.Tag = TagBatchCount
 	return ttlv.NewStructure(TagResponseHeader, respHeader.SVersion.SerialiseToTTLV(), &respHeader.TTimestamp, &respHeader.IBatchCount)
@@ -341,7 +337,7 @@ type SResponseBatchItem struct {
 	SResponsePayload SerialisedItem   // reference to any 42007c
 }
 
-func (respItem *SResponseBatchItem) SerialiseToTTLV() ttlv.Item {
+func (respItem SResponseBatchItem) SerialiseToTTLV() ttlv.Item {
 	respItem.EOperation.Tag = TagOperation
 	respItem.EResultStatus.Tag = TagResultStatus
 	return ttlv.NewStructure(TagBatchItem, &respItem.EOperation, &respItem.EResultStatus, respItem.SResponsePayload.(SerialisedItem).SerialiseToTTLV())
@@ -352,23 +348,8 @@ func (respItem *SResponseBatchItem) DeserialiseFromTTLV(in ttlv.Item) error {
 		return err
 	} else if err := DecodeStructItem(in, TagBatchItem, TagOperation, &respItem.EOperation); err != nil {
 		return err
-	}
-	// Response payload is trickier to decode, there is a limited number of options.
-	create := SResponsePayloadCreate{}
-	destroy := SResponsePayloadDelete{}
-	get := SResponsePayloadGet{}
-	// Brute force to see which one successfully decodes
-	var success bool
-	for _, payloadPtr := range []SerialisedItem{&create, &destroy, &get} {
-		if err := DecodeStructItem(in, TagBatchItem, TagResponsePayload, payloadPtr); err == nil {
-			success = true
-			break
-		} else {
-			fmt.Println("Failed to decode response payload - ", err)
-		}
-	}
-	if !success {
-		return errors.New("SResponseBatchItem.DeserialiseFromTTLV: payload type is unknown")
+	} else if err := DecodeStructItem(in, TagBatchItem, TagResponsePayload, &respItem.SResponsePayload); err != nil {
+		return err
 	}
 	return nil
 }

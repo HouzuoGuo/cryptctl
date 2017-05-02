@@ -1,6 +1,7 @@
 package structure
 
 import (
+	"fmt"
 	"github.com/HouzuoGuo/cryptctl/kmip/ttlv"
 )
 
@@ -10,7 +11,7 @@ type SCreateRequest struct {
 	SRequestBatchItem SRequestBatchItem // payload is SRequestPayloadCreate
 }
 
-func (createReq *SCreateRequest) SerialiseToTTLV() ttlv.Item {
+func (createReq SCreateRequest) SerialiseToTTLV() ttlv.Item {
 	createReq.SRequestHeader.IBatchCount.Value = 1
 	ret := ttlv.NewStructure(TagRequestMessage, createReq.SRequestHeader.SerialiseToTTLV(), createReq.SRequestBatchItem.SerialiseToTTLV())
 	return ret
@@ -18,7 +19,12 @@ func (createReq *SCreateRequest) SerialiseToTTLV() ttlv.Item {
 func (createReq *SCreateRequest) DeserialiseFromTTLV(in ttlv.Item) error {
 	if err := DecodeStructItem(in, TagRequestMessage, TagRequestHeader, &createReq.SRequestHeader); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagRequestMessage, TagBatchItem, &createReq.SRequestBatchItem); err != nil {
+	}
+	if val := createReq.SRequestHeader.IBatchCount.Value; val != 1 {
+		return fmt.Errorf("SCreateRequest.DeserialiseFromTTLV: was expecting exactly 1 item, but received %d instead.", val)
+	}
+	createReq.SRequestBatchItem = SRequestBatchItem{SRequestPayload: &SRequestPayloadCreate{}}
+	if err := DecodeStructItem(in, TagRequestMessage, TagBatchItem, &createReq.SRequestBatchItem); err != nil {
 		return err
 	}
 	return nil
@@ -30,7 +36,7 @@ type SRequestPayloadCreate struct {
 	STemplateAttribute STemplateAttribute // 420091
 }
 
-func (createPayload *SRequestPayloadCreate) SerialiseToTTLV() ttlv.Item {
+func (createPayload SRequestPayloadCreate) SerialiseToTTLV() ttlv.Item {
 	createPayload.EObjectType.Tag = TagObjectType
 	return ttlv.NewStructure(TagRequestPayload, &createPayload.EObjectType, createPayload.STemplateAttribute.SerialiseToTTLV())
 }
@@ -49,7 +55,7 @@ type SCreateRequestNameAttributeValue struct {
 	KeyType ttlv.Enumeration // 420054
 }
 
-func (nameAttr *SCreateRequestNameAttributeValue) SerialiseToTTLV() ttlv.Item {
+func (nameAttr SCreateRequestNameAttributeValue) SerialiseToTTLV() ttlv.Item {
 	nameAttr.KeyName.Tag = TagNameValue
 	nameAttr.KeyType.Tag = TagNameType
 	return ttlv.NewStructure(TagAttributeValue, &nameAttr.KeyName, &nameAttr.KeyType)
@@ -65,19 +71,24 @@ func (nameAttr *SCreateRequestNameAttributeValue) DeserialiseFromTTLV(in ttlv.It
 
 // KMIP response message 42007b
 type SCreateResponse struct {
-	SHeader            SResponseHeader // IBatchCount is assumed to be 1 in serialisation operations
+	SResponseHeader    SResponseHeader // IBatchCount is assumed to be 1 in serialisation operations
 	SResponseBatchItem SResponseBatchItem
 }
 
-func (createResp *SCreateResponse) SerialiseToTTLV() ttlv.Item {
-	createResp.SHeader.IBatchCount.Value = 1
-	ret := ttlv.NewStructure(TagResponseMessage, createResp.SHeader.SerialiseToTTLV(), createResp.SResponseBatchItem.SerialiseToTTLV())
+func (createResp SCreateResponse) SerialiseToTTLV() ttlv.Item {
+	createResp.SResponseHeader.IBatchCount.Value = 1
+	ret := ttlv.NewStructure(TagResponseMessage, createResp.SResponseHeader.SerialiseToTTLV(), createResp.SResponseBatchItem.SerialiseToTTLV())
 	return ret
 }
 func (createResp *SCreateResponse) DeserialiseFromTTLV(in ttlv.Item) error {
-	if err := DecodeStructItem(in, TagResponseMessage, TagResponseHeader, &createResp.SHeader); err != nil {
+	if err := DecodeStructItem(in, TagResponseMessage, TagResponseHeader, &createResp.SResponseHeader); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagResponseMessage, TagBatchItem, &createResp.SResponseBatchItem); err != nil {
+	}
+	if val := createResp.SResponseHeader.IBatchCount.Value; val != 1 {
+		return fmt.Errorf("SCreateResponse.DeserialiseFromTTLV: was expecting exactly 1 item, but received %d instead.", val)
+	}
+	createResp.SResponseBatchItem = SResponseBatchItem{SResponsePayload: &SResponsePayloadCreate{}}
+	if err := DecodeStructItem(in, TagResponseMessage, TagBatchItem, &createResp.SResponseBatchItem); err != nil {
 		return err
 	}
 	return nil
@@ -89,7 +100,7 @@ type SResponsePayloadCreate struct {
 	TUniqueID   ttlv.Text        // 420094
 }
 
-func (createPayload *SResponsePayloadCreate) SerialiseToTTLV() ttlv.Item {
+func (createPayload SResponsePayloadCreate) SerialiseToTTLV() ttlv.Item {
 	createPayload.EObjectType.Tag = TagObjectType
 	createPayload.TUniqueID.Tag = TagUniqueID
 	return ttlv.NewStructure(TagResponsePayload, &createPayload.EObjectType, &createPayload.TUniqueID)

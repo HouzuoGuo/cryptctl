@@ -40,7 +40,7 @@ type TTL struct {
 }
 
 // Return tag, type, and length in a string.
-func (com TTL) String() string {
+func (com TTL) TTLString() string {
 	return fmt.Sprintf("TAG %s TYP %d LEN %d", hex.EncodeToString(com.Tag[:]), com.Typ, com.Length)
 }
 
@@ -61,9 +61,6 @@ func (st *Structure) GetTTL() TTL {
 }
 
 func (st *Structure) GetLength() int {
-	if st.Tag[2] == 0xb {
-		fmt.Print()
-	}
 	newLen := 0
 	for _, item := range st.Items {
 		// Structure length counts individual item's TTL

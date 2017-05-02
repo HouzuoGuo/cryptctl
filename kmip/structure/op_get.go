@@ -1,6 +1,9 @@
 package structure
 
-import "github.com/HouzuoGuo/cryptctl/kmip/ttlv"
+import (
+	"fmt"
+	"github.com/HouzuoGuo/cryptctl/kmip/ttlv"
+)
 
 // KMIP request message 420078
 type SGetRequest struct {
@@ -16,7 +19,12 @@ func (getReq *SGetRequest) SerialiseToTTLV() ttlv.Item {
 func (getReq *SGetRequest) DeserialiseFromTTLV(in ttlv.Item) error {
 	if err := DecodeStructItem(in, TagRequestMessage, TagRequestHeader, &getReq.SRequestHeader); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagRequestMessage, TagBatchItem, &getReq.SRequestBatchItem); err != nil {
+	}
+	if val := getReq.SRequestHeader.IBatchCount.Value; val != 1 {
+		return fmt.Errorf("SGetRequest.DeserialiseFromTTLV: was expecting exactly 1 item, but received %d instead.", val)
+	}
+	getReq.SRequestBatchItem = SRequestBatchItem{SRequestPayload: &SRequestPayloadGet{}}
+	if err := DecodeStructItem(in, TagRequestMessage, TagBatchItem, &getReq.SRequestBatchItem); err != nil {
 		return err
 	}
 	return nil
@@ -40,19 +48,24 @@ func (getPayload *SRequestPayloadGet) DeserialiseFromTTLV(in ttlv.Item) error {
 
 // KMIP response message 42007b
 type SGetResponse struct {
-	SHeader            SResponseHeader    // IBatchCount is assumed to be 1 in serialisation operations
+	SResponseHeader    SResponseHeader    // IBatchCount is assumed to be 1 in serialisation operations
 	SResponseBatchItem SResponseBatchItem // payload is SResponsePayloadGet
 }
 
 func (getResp *SGetResponse) SerialiseToTTLV() ttlv.Item {
-	getResp.SHeader.IBatchCount.Value = 1
-	ret := ttlv.NewStructure(TagResponseMessage, getResp.SHeader.SerialiseToTTLV(), getResp.SResponseBatchItem.SerialiseToTTLV())
+	getResp.SResponseHeader.IBatchCount.Value = 1
+	ret := ttlv.NewStructure(TagResponseMessage, getResp.SResponseHeader.SerialiseToTTLV(), getResp.SResponseBatchItem.SerialiseToTTLV())
 	return ret
 }
 func (getResp *SGetResponse) DeserialiseFromTTLV(in ttlv.Item) error {
-	if err := DecodeStructItem(in, TagResponseMessage, TagResponseHeader, &getResp.SHeader); err != nil {
+	if err := DecodeStructItem(in, TagResponseMessage, TagResponseHeader, &getResp.SResponseHeader); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagResponseMessage, TagBatchItem, &getResp.SResponseBatchItem); err != nil {
+	}
+	if val := getResp.SResponseHeader.IBatchCount.Value; val != 1 {
+		return fmt.Errorf("SGetResponse.DeserialiseFromTTLV: was expecting exactly 1 item, but received %d instead.", val)
+	}
+	getResp.SResponseBatchItem = SResponseBatchItem{SResponsePayload: &SResponsePayloadGet{}}
+	if err := DecodeStructItem(in, TagResponseMessage, TagBatchItem, &getResp.SResponseBatchItem); err != nil {
 		return err
 	}
 	return nil
@@ -62,7 +75,7 @@ func (getResp *SGetResponse) DeserialiseFromTTLV(in ttlv.Item) error {
 type SResponsePayloadGet struct {
 	EObjectType   ttlv.Enumeration // 420057
 	TUniqueID     ttlv.Text        // 420094
-	SSymmetricKey SSymmetricKey
+	SSymmetricKey SSymmetricKey    // 42008f
 }
 
 func (getPayload *SResponsePayloadGet) SerialiseToTTLV() ttlv.Item {

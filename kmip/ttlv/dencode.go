@@ -47,28 +47,28 @@ func DebugTTLVItem(indent int, entity interface{}) string {
 	} else {
 		switch t := entity.(type) {
 		case *Structure:
-			ret.WriteString(t.TTL.String())
+			ret.WriteString(t.TTL.TTLString())
 			ret.WriteRune('\n')
 			for _, item := range t.Items {
 				ret.WriteString(DebugTTLVItem(indent+4, item))
 			}
 		case *Integer:
-			ret.WriteString(fmt.Sprintf("%s - %d", t.TTL.String(), t.Value))
+			ret.WriteString(fmt.Sprintf("%s - %d", t.TTL.TTLString(), t.Value))
 			ret.WriteRune('\n')
 		case *LongInteger:
-			ret.WriteString(fmt.Sprintf("%s - %d", t.TTL.String(), t.Value))
+			ret.WriteString(fmt.Sprintf("%s - %d", t.TTL.TTLString(), t.Value))
 			ret.WriteRune('\n')
 		case *DateTime:
-			ret.WriteString(fmt.Sprintf("%s - %s", t.TTL.String(), t.Time.Format(time.RFC3339)))
+			ret.WriteString(fmt.Sprintf("%s - %s", t.TTL.TTLString(), t.Time.Format(time.RFC3339)))
 			ret.WriteRune('\n')
 		case *Enumeration:
-			ret.WriteString(fmt.Sprintf("%s - %d", t.TTL.String(), t.Value))
+			ret.WriteString(fmt.Sprintf("%s - %d", t.TTL.TTLString(), t.Value))
 			ret.WriteRune('\n')
 		case *Text:
-			ret.WriteString(fmt.Sprintf("%s - %s", t.TTL.String(), t.Value))
+			ret.WriteString(fmt.Sprintf("%s - %s", t.TTL.TTLString(), t.Value))
 			ret.WriteRune('\n')
 		case *Bytes:
-			ret.WriteString(fmt.Sprintf("%s - %s", t.TTL.String(), hex.EncodeToString(t.Value)))
+			ret.WriteString(fmt.Sprintf("%s - %s", t.TTL.TTLString(), hex.EncodeToString(t.Value)))
 			ret.WriteRune('\n')
 		default:
 			ret.WriteString(fmt.Sprintf("(Unknown structure) %+v", t))
@@ -171,7 +171,7 @@ func DecodeAny(in []byte) (ret Item, length int, err error) {
 		length = 8
 		enum := &Enumeration{TTL: common}
 		if err := binary.Read(bytes.NewReader(in[:4]), binary.BigEndian, &enum.Value); err != nil {
-			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.String(), err)
+			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.TTLString(), err)
 		}
 		ret = enum
 	case TypInt:
@@ -179,14 +179,14 @@ func DecodeAny(in []byte) (ret Item, length int, err error) {
 		length = 8
 		integer := &Integer{TTL: common}
 		if err := binary.Read(bytes.NewReader(in[:4]), binary.BigEndian, &integer.Value); err != nil {
-			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.String(), err)
+			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.TTLString(), err)
 		}
 		ret = integer
 	case TypLong:
 		length = 8
 		long := &LongInteger{TTL: common}
 		if err := binary.Read(bytes.NewReader(in[:8]), binary.BigEndian, &long.Value); err != nil {
-			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.String(), err)
+			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.TTLString(), err)
 		}
 		ret = long
 	case TypStruct:
@@ -197,7 +197,7 @@ func DecodeAny(in []byte) (ret Item, length int, err error) {
 			// Decode item at current index
 			item, itemLength, err := DecodeAny(in)
 			if err != nil {
-				return nil, length, fmt.Errorf("DecodeAny: failed to decode structure %s's item - %v", common.String(), err)
+				return nil, length, fmt.Errorf("DecodeAny: failed to decode structure %s's item - %v", common.TTLString(), err)
 			}
 			structure.Items = append(structure.Items, item)
 			// Advance index by the length of decoded TTL plus newly decoded item
@@ -223,64 +223,76 @@ func DecodeAny(in []byte) (ret Item, length int, err error) {
 		length = 8
 		var longInt int64
 		if err := binary.Read(bytes.NewReader(in[:8]), binary.BigEndian, &longInt); err != nil {
-			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.String(), err)
+			return nil, length, fmt.Errorf("DecodeAny: failed to decode %s's value - %v", common.TTLString(), err)
 		}
 		ret = &DateTime{TTL: common, Time: time.Unix(longInt, 0)}
 	default:
-		return nil, length, fmt.Errorf("DecodeAny: does not know how to decode %s's type", common.String())
+		return nil, length, fmt.Errorf("DecodeAny: does not know how to decode %s's type", common.TTLString())
 	}
 	return
 }
 
-// Copy value of a primitive TTLV item from src to dest. Both src and dest are pointers.
-func CopyValue(dest, src Item) error {
+// Copy tag, type, and value of a primitive TTLV item from src to dest. Both src and dest are pointers.
+func CopyPrimitive(dest, src Item) error {
 	if src == nil {
-		return errors.New("CopyValue: source value may not be nil")
+		return errors.New("CopyPrimitive: source value may not be nil")
 	}
 	if dest == nil {
-		return errors.New("CopyValue: destination value may not be nil")
+		return errors.New("CopyPrimitive: destination value may not be nil")
 	}
-	typeErr := fmt.Errorf("CopyValue: was expecting destination to be of type %s, but it is %s.", reflect.TypeOf(src).String(), reflect.TypeOf(dest).String())
+	typeErr := fmt.Errorf("CopyPrimitive: was expecting destination to be of type %s, but it is %s.", reflect.TypeOf(src).String(), reflect.TypeOf(dest).String())
 	switch t := src.(type) {
 	case *Integer:
 		if tDest, yes := dest.(*Integer); yes {
+			tDest.Tag = t.Tag
+			tDest.Typ = t.Typ
 			tDest.Value = t.Value
 		} else {
 			return typeErr
 		}
 	case *LongInteger:
 		if tDest, yes := dest.(*LongInteger); yes {
+			tDest.Tag = t.Tag
+			tDest.Typ = t.Typ
 			tDest.Value = t.Value
 		} else {
 			return typeErr
 		}
 	case *Enumeration:
 		if tDest, yes := dest.(*Enumeration); yes {
+			tDest.Tag = t.Tag
+			tDest.Typ = t.Typ
 			tDest.Value = t.Value
 		} else {
 			return typeErr
 		}
 	case *DateTime:
 		if tDest, yes := dest.(*DateTime); yes {
+			tDest.Tag = t.Tag
+			tDest.Typ = t.Typ
 			tDest.Time = t.Time
 		} else {
 			return typeErr
 		}
 	case *Text:
 		if tDest, yes := dest.(*Text); yes {
+			tDest.Tag = t.Tag
+			tDest.Typ = t.Typ
 			tDest.Value = t.Value
 		} else {
 			return typeErr
 		}
 	case *Bytes:
 		if tDest, yes := dest.(*Bytes); yes {
+			tDest.Tag = t.Tag
+			tDest.Typ = t.Typ
 			tDest.Value = make([]byte, len(t.Value))
 			copy(tDest.Value, t.Value)
 		} else {
 			return typeErr
 		}
 	default:
-		return fmt.Errorf("CopyValue: unknown source value type %s", reflect.TypeOf(src).String())
+		return fmt.Errorf("CopyPrimitive: unknown source value type %s", reflect.TypeOf(src).String())
 	}
 	return nil
 }

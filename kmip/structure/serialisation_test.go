@@ -1,100 +1,108 @@
 package structure
 
 import (
+	"encoding/hex"
+	"fmt"
 	"github.com/HouzuoGuo/cryptctl/kmip/ttlv"
 	"reflect"
 	"testing"
 )
 
-func TestSimpleSerialiseDeserialise(t *testing.T) {
-	// Hand-craft a simple structure
+func TestSerialiseSimpleStruct(t *testing.T) {
+	// Hand-craft a SCredential
 	ttlvStruct := &ttlv.Structure{
 		TTL: ttlv.TTL{
-			Tag: TagResponsePayload,
+			Tag: TagCredential,
 			Typ: ttlv.TypStruct,
 		},
 		Items: []interface{}{
-			&ttlv.Text{
+			&ttlv.Enumeration{
 				TTL: ttlv.TTL{
-					Tag: TagUniqueID,
-					Typ: ttlv.TypeText,
+					Tag: TagCredentialType,
+					Typ: ttlv.TypeEnum,
 				},
-				Value: "test value",
+				Value: 1,
+			},
+			&ttlv.Structure{
+				TTL: ttlv.TTL{
+					Tag: TagCredentialValue,
+					Typ: ttlv.TypStruct,
+				},
+				Items: []interface{}{
+					&ttlv.Text{
+						TTL: ttlv.TTL{
+							Tag: TagUsername,
+							Typ: ttlv.TypeText,
+						},
+						Value: "user",
+					},
+					&ttlv.Text{
+						TTL: ttlv.TTL{
+							Tag: TagPassword,
+							Typ: ttlv.TypeText,
+						},
+						Value: "pass",
+					},
+				},
 			},
 		},
 	}
 	// Length of TTLV items is automatically calculated during encoding process
 	ttlvBytes := ttlv.EncodeAny(ttlvStruct)
-	// Deserialise into a simple payload
-	simplePayload := SResponsePayloadDelete{}
-	if err := simplePayload.DeserialiseFromTTLV(ttlvStruct); err != nil {
+	// Deserialise into a SCredential
+	cred := SCredential{}
+	if err := cred.DeserialiseFromTTLV(ttlvStruct); err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("Encoded:\n%s", ttlv.DebugTTLVItem(0, ttlvStruct))
+	t.Logf("Deserialised:\n%+v", cred)
 
 	// Reverse the process
-	ttlvStructRecovered := simplePayload.SerialiseToTTLV()
-	t.Log(ttlv.DebugTTLVItem(0, ttlvStructRecovered))
+	ttlvStructRecovered := cred.SerialiseToTTLV()
+	t.Logf("Recovered:\n%s", ttlv.DebugTTLVItem(0, ttlvStructRecovered))
 	// Serialise the reversed structure and match byte binary
 	ttlvBytesRecovered := ttlv.EncodeAny(ttlvStructRecovered)
+	fmt.Println(hex.Dump(ttlvBytes))
+	fmt.Println(hex.Dump(ttlvBytesRecovered))
 	if !reflect.DeepEqual(ttlvBytes, ttlvBytesRecovered) {
-		t.Fatal("mismatch!!!")
+		t.Fatal("mismatch in binary representation")
 	}
-	t.Logf("%+v", simplePayload)
 }
 
-func TestStructureSerialiseDeserialise(t *testing.T) {
-	ttlvCreateReq, _, err := ttlv.DecodeAny(ttlv.SampleCreateRequest)
-	if err != nil {
-		t.Fatal(err)
+func TestSerialiseStruct(t *testing.T) {
+	structs := []SerialisedItem{&SCreateRequest{}, &SCreateResponse{}, &SGetRequest{}, &SGetResponse{}, &SDestroyRequest{}, &SDestroyResponse{}}
+	binaries := [][]byte{ttlv.SampleCreateRequest, ttlv.SampleCreateResponse, ttlv.SampleGetRequest, ttlv.SampleGetResponse, ttlv.SampleDestroyRequest, ttlv.SampleDestroyResponse}
+	ttlvs := make([]ttlv.Item, len(binaries))
+
+	for i, bin := range binaries {
+		fmt.Printf("====================\n%d\n====================\n", i)
+		var err error
+		// bin -> ttlv
+		ttlvs[i], _, err = ttlv.DecodeAny(bin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Printf("Input binary:\n%s\n", hex.Dump(bin))
+		fmt.Printf("Input TTLV:\n%s\n", ttlv.DebugTTLVItem(0, ttlvs[i]))
+		// ttlv -> struct
+		err = structs[i].DeserialiseFromTTLV(ttlvs[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		/*
+			debugJson, err := json.MarshalIndent(structs[i], "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Printf("Input struct:\n%s\n", string(debugJson))
+		*/
+		// reverse the operations above
+		recoveredTTLV := structs[i].SerialiseToTTLV()
+		fmt.Printf("Recovered TTLV:\n%s\n", ttlv.DebugTTLVItem(0, recoveredTTLV))
+		recoveredBin := ttlv.EncodeAny(recoveredTTLV)
+		fmt.Printf("Recovered binary:\n%s\n", hex.Dump(recoveredBin))
+		if !reflect.DeepEqual(bin, recoveredBin) {
+			t.Fatal("mismatch in binary representation")
+		}
 	}
-	createReq := SCreateRequest{}
-	if err := createReq.DeserialiseFromTTLV(ttlvCreateReq); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("%+v", createReq)
-	ttlvCreateResp, _, err := ttlv.DecodeAny(ttlv.SampleCreateResponse)
-	if err != nil {
-		t.Fatal(err)
-	}
-	createResp := SCreateResponse{}
-	if err := createResp.DeserialiseFromTTLV(ttlvCreateResp); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("%+v", createResp)
-	ttlvGetReq, _, err := ttlv.DecodeAny(ttlv.SampleGetRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	getReq := SGetRequest{}
-	if err := getReq.DeserialiseFromTTLV(ttlvGetReq); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("%+v", getReq)
-	ttlvGetResp, _, err := ttlv.DecodeAny(ttlv.SampleGetResponse)
-	if err != nil {
-		t.Fatal(err)
-	}
-	getResp := SGetResponse{}
-	if err := getResp.DeserialiseFromTTLV(ttlvGetResp); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("%+v", getResp)
-	ttlvDestroyReq, _, err := ttlv.DecodeAny(ttlv.SampleDestroyRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	destroyReq := SDestroyRequest{}
-	if err := destroyReq.DeserialiseFromTTLV(ttlvDestroyReq); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("%+v", destroyReq)
-	ttlvDestroyResp, _, err := ttlv.DecodeAny(ttlv.SampleDestroyResponse)
-	if err != nil {
-		t.Fatal(err)
-	}
-	destroyResp := SDestroyResponse{}
-	if err := destroyResp.DeserialiseFromTTLV(ttlvDestroyResp); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("%+v", destroyResp)
 }
