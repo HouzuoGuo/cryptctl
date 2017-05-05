@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -26,9 +27,11 @@ All key records are read into memory upon startup for fast retrieval.
 All exported functions are safe for concurrent usage.
 */
 type DB struct {
-	Dir     string
-	Records map[string]Record // string is record UUID
-	Lock    *sync.RWMutex     // prevent concurrent access to records
+	Dir             string
+	RecordsByUUID   map[string]Record // key is record UUID string
+	RecordsByID     map[string]Record // when saved by built-in KMIP server, the ID is a sequence number; otherwise it can be anything.
+	LastSequenceNum int64             // the last sequence number currently in-use
+	Lock            *sync.RWMutex     // prevent concurrent access to records
 }
 
 // Open a key database directory and read all key records into memory. Caller should consider to lock memory.
@@ -50,10 +53,11 @@ func OpenDBOneRecord(dir, recordUUID string) (db *DB, err error) {
 	if err := os.MkdirAll(dir, DB_DIR_FILE_MODE); err != nil {
 		return nil, fmt.Errorf("OpenDB: failed to make db directory \"%s\" - %v", dir, err)
 	}
-	db = &DB{Dir: dir, Lock: new(sync.RWMutex), Records: map[string]Record{}}
+	db = &DB{Dir: dir, Lock: new(sync.RWMutex), RecordsByUUID: map[string]Record{}, RecordsByID: map[string]Record{}}
 	keyRecord, err := db.LoadRecord(path.Join(dir, recordUUID))
 	if err == nil {
-		db.Records[recordUUID] = keyRecord
+		db.RecordsByUUID[recordUUID] = keyRecord
+		db.RecordsByID[keyRecord.ID] = keyRecord
 	}
 	return
 }
@@ -72,21 +76,71 @@ func (db *DB) LoadRecord(absPath string) (keyRecord Record, err error) {
 func (db *DB) ReloadDB() error {
 	db.Lock.Lock()
 	defer db.Lock.Unlock()
-	db.Records = make(map[string]Record)
+
+	db.RecordsByUUID = make(map[string]Record)
+	db.RecordsByID = make(map[string]Record)
 	keyFiles, err := ioutil.ReadDir(db.Dir)
 	if err != nil {
 		return fmt.Errorf("ReloadDB: failed to read directory \"%s\" - %v", db.Dir, err)
 	}
+
+	var lastSequenceNum int64
+	recordsToUpgrade := make([]Record, 0, 0)
+	// Read and deserialise each record file while finding out the last sequence number
 	for _, fileInfo := range keyFiles {
-		// Read and deserialise each record file
 		filePath := path.Join(db.Dir, fileInfo.Name())
 		if keyRecord, err := db.LoadRecord(filePath); err == nil {
-			db.Records[keyRecord.UUID] = keyRecord
+			if keyRecord.Version == CurrentRecordVersion {
+				db.RecordsByUUID[keyRecord.UUID] = keyRecord
+				db.RecordsByID[keyRecord.ID] = keyRecord
+				// If the record was created by built-in KMIP server, the key is a sequence number.
+				idSeq, _ := strconv.ParseInt(keyRecord.ID, 10, 64)
+				if err == nil {
+					if idSeq > lastSequenceNum {
+						lastSequenceNum = idSeq
+					}
+				}
+			} else {
+				// Upgrade the record and place them into maps later
+				recordsToUpgrade = append(recordsToUpgrade, keyRecord)
+			}
 		} else {
-			log.Printf("ReloadDB: non-fatal failure occured when reading record \"%s\" - %v", filePath, err)
+			log.Printf("DB.ReloadDB: non-fatal failure occured when reading record \"%s\" - %v", filePath, err)
 		}
 	}
-	log.Printf("ReloadDB: successfully loaded database of %d records", len(db.Records))
+	for _, record := range recordsToUpgrade {
+		if err := db.UpgradeRecord(record); err != nil {
+			return err
+		}
+	}
+	log.Printf("DB.ReloadDB: successfully loaded database of %d records", len(db.RecordsByUUID))
+	return nil
+}
+
+// Upgrade a record to the latest version.
+func (db *DB) UpgradeRecord(record Record) error {
+	switch record.Version {
+	case 0:
+		return db.UpgradeRecordToVersion1(record)
+	default:
+		return nil
+	}
+}
+
+/*
+Record version 0 was the first version prior and equal to cryptctl 1.99 pre-release.
+Version number 1 gives each record a KMIP key ID, a creation time, and knows whether key content is located on external KMIP server.
+*/
+func (db *DB) UpgradeRecordToVersion1(record Record) error {
+	/*
+		By contract, upsert assigns a record a sequence number if it does not yet have one.
+		After successful update, the record is updated in both RecordsByUUID and RecordsByID.
+	*/
+	_, err := db.upsert(record, true)
+	if err != nil {
+		return err
+	}
+	log.Printf("DB.UpgradeRecordToVersion1: just upgraded record \"%s\"", record.UUID)
 	return nil
 }
 
@@ -97,31 +151,58 @@ func (db *DB) logIOFailure(rec Record, err error) error {
 	return errors.New(failMessage)
 }
 
-// Create/update and immediately persist a key record. IO errors are returned and logged to stderr.
-func (db *DB) upsert(rec Record, doSync bool) error {
+/*
+Create/update and immediately persist a key record.
+If the record does not yet have a KMIP ID, it will be given a sequence number as ID.
+IO errors are returned and logged to stderr.
+*/
+func (db *DB) upsert(rec Record, doSync bool) (string, error) {
+	// For a new record that doesn't yet have a sequence number, assign it the next number in sequence.
+	if rec.ID == "" {
+		db.LastSequenceNum++
+		rec.ID = strconv.FormatInt(db.LastSequenceNum, 10)
+	}
 	fh, err := os.OpenFile(path.Join(db.Dir, rec.UUID), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, DB_REC_FILE_MODE)
 	if err == nil {
 		defer fh.Close()
 	} else {
-		return db.logIOFailure(rec, err)
+		return "", db.logIOFailure(rec, err)
 	}
 	if _, err := fh.Write(rec.Serialise()); err != nil {
-		return db.logIOFailure(rec, err)
+		return "", db.logIOFailure(rec, err)
 	}
 	if doSync {
 		if err := fh.Sync(); err != nil {
-			return db.logIOFailure(rec, err)
+			return "", db.logIOFailure(rec, err)
 		}
 	}
-	db.Records[rec.UUID] = rec
-	return nil
+	// The in-memory copy of record is kept up to date with the copy on disk.
+	db.RecordsByUUID[rec.UUID] = rec
+	db.RecordsByID[rec.ID] = rec
+	return rec.ID, err
 }
 
 // Create/update and immediately persist a key record. IO errors are returned and logged to stderr.
-func (db *DB) Upsert(rec Record) error {
+func (db *DB) Upsert(rec Record) (kmipID string, err error) {
 	db.Lock.Lock()
 	defer db.Lock.Unlock()
 	return db.upsert(rec, true)
+}
+
+// Retrieve a key record by its KMIP ID.
+func (db *DB) GetByID(id string) (rec Record, found bool) {
+	db.Lock.Lock()
+	defer db.Lock.Unlock()
+	rec, found = db.RecordsByID[id]
+	return
+}
+
+// Retrieve a key record by its disk UUID.
+func (db *DB) GetByUUID(uuid string) (rec Record, found bool) {
+	db.Lock.Lock()
+	defer db.Lock.Unlock()
+	rec, found = db.RecordsByUUID[uuid]
+	return
 }
 
 // Record and immediately persist alive message that came from a host.
@@ -130,7 +211,7 @@ func (db *DB) UpdateAliveMessage(latest AliveMessage, uuids ...string) (rejected
 	db.Lock.Lock()
 	defer db.Lock.Unlock()
 	for _, uuid := range uuids {
-		if record, exists := db.Records[uuid]; exists {
+		if record, exists := db.RecordsByUUID[uuid]; exists {
 			if record.UpdateAliveMessage(latest) {
 				db.upsert(record, false) // IO error is logged
 			} else {
@@ -153,11 +234,11 @@ func (db *DB) Select(aliveMessage AliveMessage, checkMaxActive bool, uuids ...st
 	db.Lock.Lock()
 	defer db.Lock.Unlock()
 	for _, uuid := range uuids {
-		if record, exists := db.Records[uuid]; exists {
+		if record, exists := db.RecordsByUUID[uuid]; exists {
 			// Log dead hosts
 			ok, deadFinalMessage := record.UpdateLastRetrieval(aliveMessage, checkMaxActive)
 			if len(deadFinalMessage) > 0 {
-				log.Printf("Select: record %s has not heard %d from these hosts: %+v", uuid, time.Now().Unix(), deadFinalMessage)
+				log.Printf("DB.Select: record %s has not heard %d from these hosts: %+v", uuid, time.Now().Unix(), deadFinalMessage)
 			}
 			if ok {
 				db.upsert(record, true) // IO error is logged
@@ -177,8 +258,8 @@ func (db *DB) Select(aliveMessage AliveMessage, checkMaxActive bool, uuids ...st
 func (db *DB) List() (sortedRecords RecordSlice) {
 	db.Lock.RLock()
 	defer db.Lock.RUnlock()
-	sortedRecords = make([]Record, 0, len(db.Records))
-	for _, rec := range db.Records {
+	sortedRecords = make([]Record, 0, len(db.RecordsByUUID))
+	for _, rec := range db.RecordsByUUID {
 		// Do not return encryption key
 		rec.Key = nil
 		sortedRecords = append(sortedRecords, rec)
@@ -191,12 +272,12 @@ func (db *DB) List() (sortedRecords RecordSlice) {
 func (db *DB) Erase(uuid string) error {
 	db.Lock.Lock()
 	defer db.Lock.Unlock()
-	if _, exists := db.Records[uuid]; !exists {
-		return fmt.Errorf("Delete: record '%s' does not exist", uuid)
+	if _, exists := db.RecordsByUUID[uuid]; !exists {
+		return fmt.Errorf("DB.Delete: record '%s' does not exist", uuid)
 	}
-	delete(db.Records, uuid)
+	delete(db.RecordsByUUID, uuid)
 	if err := fs.SecureErase(path.Join(db.Dir, uuid), true); err != nil {
-		return fmt.Errorf("Delete: failed to delete db record for %s - %v", uuid, err)
+		return fmt.Errorf("DB.Delete: failed to delete db record for %s - %v", uuid, err)
 	}
 	return nil
 }

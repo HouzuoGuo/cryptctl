@@ -1,4 +1,4 @@
-package keyrpc
+package keyserv
 
 import (
 	"errors"

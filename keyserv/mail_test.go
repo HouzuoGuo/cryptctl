@@ -1,6 +1,6 @@
 // cryptctl - Copyright (c) 2016 SUSE Linux GmbH, Germany
 // This source code is licensed under GPL version 3 that can be found in LICENSE file.
-package keyrpc
+package keyserv
 
 import (
 	"testing"

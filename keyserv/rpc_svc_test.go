@@ -1,6 +1,6 @@
 // cryptctl - Copyright (c) 2016 SUSE Linux GmbH, Germany
 // This source code is licensed under GPL version 3 that can be found in LICENSE file.
-package keyrpc
+package keyserv
 
 import (
 	"crypto/sha512"
@@ -90,16 +90,16 @@ func TestServiceReadFromSysconfig(t *testing.T) {
 	if err := svcConf.ReadFromSysconfig(sysconf); err == nil {
 		t.Fatal("did not error on bad tls")
 	}
-	sysconf.Set("TLS_CERT_PEM", path.Join(PkgInGopath, "keyrpc", "rpc_test.crt"))
-	sysconf.Set("TLS_CERT_KEY_PEM", path.Join(PkgInGopath, "keyrpc", "rpc_test.key"))
+	sysconf.Set("TLS_CERT_PEM", path.Join(PkgInGopath, "keyserv", "rpc_test.crt"))
+	sysconf.Set("TLS_CERT_KEY_PEM", path.Join(PkgInGopath, "keyserv", "rpc_test.key"))
 	if err := svcConf.ReadFromSysconfig(sysconf); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(svcConf, CryptServiceConfig{
 		PasswordHash:         hash,
 		PasswordSalt:         salt,
-		CertPEM:              path.Join(PkgInGopath, "keyrpc", "rpc_test.crt"),
-		KeyPEM:               path.Join(PkgInGopath, "keyrpc", "rpc_test.key"),
+		CertPEM:              path.Join(PkgInGopath, "keyserv", "rpc_test.crt"),
+		KeyPEM:               path.Join(PkgInGopath, "keyserv", "rpc_test.key"),
 		Address:              "1.1.1.1",
 		Port:                 1234,
 		KeyDBDir:             "/abc",

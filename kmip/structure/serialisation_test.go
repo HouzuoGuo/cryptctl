@@ -70,8 +70,16 @@ func TestSerialiseSimpleStruct(t *testing.T) {
 }
 
 func TestSerialiseStruct(t *testing.T) {
-	structs := []SerialisedItem{&SCreateRequest{}, &SCreateResponse{}, &SGetRequest{}, &SGetResponse{}, &SDestroyRequest{}, &SDestroyResponse{}}
-	binaries := [][]byte{ttlv.SampleCreateRequest, ttlv.SampleCreateResponse, ttlv.SampleGetRequest, ttlv.SampleGetResponse, ttlv.SampleDestroyRequest, ttlv.SampleDestroyResponse}
+	structs := []SerialisedItem{
+		&SCreateRequest{}, &SCreateResponse{},
+		&SGetRequest{}, &SGetResponse{}, &SGetResponse{},
+		&SDestroyRequest{}, &SDestroyResponse{}, &SDestroyResponse{},
+	}
+	binaries := [][]byte{
+		ttlv.SampleCreateRequest, ttlv.SampleCreateResponseSuccess,
+		ttlv.SampleGetRequest, ttlv.SampleGetResponseSuccess, ttlv.SampleGetResponseFailure,
+		ttlv.SampleDestroyRequest, ttlv.SampleDestroyResponseSuccess, ttlv.SampleDestroyResponseFailure,
+	}
 	ttlvs := make([]ttlv.Item, len(binaries))
 
 	for i, bin := range binaries {

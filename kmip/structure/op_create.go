@@ -51,19 +51,19 @@ func (createPayload *SRequestPayloadCreate) DeserialiseFromTTLV(in ttlv.Item) er
 
 // 42000b of a create request's payload attribute called "Name"
 type SCreateRequestNameAttributeValue struct {
-	KeyName ttlv.Text        // 420055
-	KeyType ttlv.Enumeration // 420054
+	TKeyName ttlv.Text        // 420055
+	EKeyType ttlv.Enumeration // 420054
 }
 
 func (nameAttr SCreateRequestNameAttributeValue) SerialiseToTTLV() ttlv.Item {
-	nameAttr.KeyName.Tag = TagNameValue
-	nameAttr.KeyType.Tag = TagNameType
-	return ttlv.NewStructure(TagAttributeValue, &nameAttr.KeyName, &nameAttr.KeyType)
+	nameAttr.TKeyName.Tag = TagNameValue
+	nameAttr.EKeyType.Tag = TagNameType
+	return ttlv.NewStructure(TagAttributeValue, &nameAttr.TKeyName, &nameAttr.EKeyType)
 }
 func (nameAttr *SCreateRequestNameAttributeValue) DeserialiseFromTTLV(in ttlv.Item) error {
-	if err := DecodeStructItem(in, TagAttribute, TagNameValue, &nameAttr.KeyName); err != nil {
+	if err := DecodeStructItem(in, TagAttribute, TagNameValue, &nameAttr.TKeyName); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagAttribute, TagNameType, &nameAttr.KeyType); err != nil {
+	} else if err := DecodeStructItem(in, TagAttribute, TagNameType, &nameAttr.EKeyType); err != nil {
 		return err
 	}
 	return nil

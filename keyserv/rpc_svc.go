@@ -1,6 +1,6 @@
 // cryptctl - Copyright (c) 2016 SUSE Linux GmbH, Germany
 // This source code is licensed under GPL version 3 that can be found in LICENSE file.
-package keyrpc
+package keyserv
 
 import (
 	"crypto/rand"
@@ -39,6 +39,11 @@ const (
 	SRV_CONF_MAIL_CREATION_TEXT  = "EMAIL_KEY_CREATION_GREETING"
 	SRV_CONF_MAIL_RETRIEVAL_SUBJ = "EMAIL_KEY_RETRIEVAL_SUBJECT"
 	SRV_CONF_MAIL_RETRIEVAL_TEXT = "EMAIL_KEY_RETRIEVAL_GREETING"
+
+	SRV_CONF_KMIP_SERVER_HOST = "KMIP_SERVER_HOST"
+	SRV_CONF_KMIP_SERVER_PORT = "KMIP_SERVER_PORT"
+	SRV_CONF_KMIP_SERVER_USER = "KMIP_SERVER_USER"
+	SRV_CONF_KMIP_SERVER_PASS = "KMIP_SERVER_PASS"
 )
 
 var PkgInGopath = path.Join(path.Join(os.Getenv("GOPATH"), "/src/github.com/HouzuoGuo/cryptctl")) // this package in gopath
@@ -83,6 +88,10 @@ type CryptServiceConfig struct {
 	KeyCreationGreeting  string              // greeting of the notification email sent by key creation request
 	KeyRetrievalSubject  string              // subject of the notification email sent by key retrieval request
 	KeyRetrievalGreeting string              // greeting of the notification email sent by key retrieval request
+	KMIPHost             string              // optional KMIP server host
+	KMIPPort             int                 // optional KMIP server port
+	KMIPUser             string              // optional KMIP service access user
+	KMIPPass             string              // optional KMIP service access password
 }
 
 // Preliminarily validate configuration and report error.
@@ -111,21 +120,29 @@ func (conf *CryptServiceConfig) ReadFromSysconfig(sysconf *sys.Sysconfig) error 
 	if err != nil {
 		return fmt.Errorf("NewCryptService: malformed value in key %s", SRV_CONF_PASS_SALT)
 	}
+	copy(conf.PasswordHash[:], passwordHash)
+	copy(conf.PasswordSalt[:], passwordSalt)
+
 	conf.CertPEM = sysconf.GetString(SRV_CONF_TLS_CERT, "")
 	conf.KeyPEM = sysconf.GetString(SRV_CONF_TLS_KEY, "")
 	conf.Address = sysconf.GetString(SRV_CONF_LISTEN_ADDR, "0.0.0.0")
 	conf.Port = sysconf.GetInt(SRV_CONF_LISTEN_PORT, SRV_DEFAULT_PORT)
+
 	conf.KeyDBDir = sysconf.GetString(SRV_CONF_KEYDB_DIR, "/var/lib/cryptctl/keydb")
+
 	conf.KeyCreationSubject = sysconf.GetString(SRV_CONF_MAIL_CREATION_SUBJ, "A new file system has been encrypted")
 	conf.KeyCreationGreeting = sysconf.GetString(SRV_CONF_MAIL_CREATION_TEXT, "The key server now has encryption key for the following file system:")
 	conf.KeyRetrievalSubject = sysconf.GetString(SRV_CONF_MAIL_RETRIEVAL_SUBJ, "An encrypted file system has been accessed")
 	conf.KeyRetrievalGreeting = sysconf.GetString(SRV_CONF_MAIL_RETRIEVAL_TEXT, "The key server has sent the following encryption key to allow access to its file systems:")
-	copy(conf.PasswordHash[:], passwordHash)
-	copy(conf.PasswordSalt[:], passwordSalt)
+
+	conf.KMIPHost = sysconf.GetString(SRV_CONF_KMIP_SERVER_HOST, "")
+	conf.KMIPPort = sysconf.GetInt(SRV_CONF_KMIP_SERVER_PORT, 0)
+	conf.KMIPUser = sysconf.GetString(SRV_CONF_KMIP_SERVER_USER, "")
+	conf.KMIPPass = sysconf.GetString(SRV_CONF_KMIP_SERVER_PASS, "")
 	return conf.Validate()
 }
 
-// RPC server for accessing encryption keys.
+// RPC and KMIP server for accessing encryption keys.
 type CryptServer struct {
 	Config            CryptServiceConfig // service configuration
 	Mailer            *Mailer            // mail notification sender
@@ -151,8 +168,11 @@ func NewCryptServer(config CryptServiceConfig, mailer Mailer) (srv *CryptServer,
 	}
 	srv.TLSConfig.Certificates = make([]tls.Certificate, 1)
 	srv.TLSConfig.Certificates[0], err = tls.LoadX509KeyPair(config.CertPEM, config.KeyPEM)
+	// Shutdown challenge is an array of random bytes
 	srv.ShutdownChallenge = make([]byte, LEN_SHUTDOWN_CHALLENGE)
-	_, err = rand.Read(srv.ShutdownChallenge)
+	if _, err = rand.Read(srv.ShutdownChallenge); err != nil {
+		return
+	}
 	return
 }
 
@@ -278,7 +298,8 @@ func (rpcConn *CryptServiceConn) SaveKey(req SaveKeyReq, _ *DummyAttr) error {
 	if err := req.Record.Validate(); err != nil {
 		return err
 	}
-	if err := rpcConn.Svc.KeyDB.Upsert(req.Record); err != nil {
+	// TODO: insert KMIP logic here
+	if _, err := rpcConn.Svc.KeyDB.Upsert(req.Record); err != nil {
 		return err
 	}
 	// Format a record for journal

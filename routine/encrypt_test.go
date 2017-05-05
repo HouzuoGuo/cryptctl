@@ -71,32 +71,32 @@ func TestEncryptDecrypt(t *testing.T) {
 	keydbDir := "/tmp/cryptctl-encrypttest"
 	os.RemoveAll(keydbDir)
 	defer os.RemoveAll(keydbDir)
-	salt := keyrpc.NewSalt()
-	passHash := keyrpc.HashPassword(salt, keyrpc.TEST_RPC_PASS)
-	sysconf := keyrpc.GetDefaultKeySvcConf()
-	sysconf.Set(keyrpc.SRV_CONF_KEYDB_DIR, keydbDir)
-	sysconf.Set(keyrpc.SRV_CONF_TLS_CERT, path.Join(keyrpc.PkgInGopath, "keyrpc", "rpc_test.crt"))
-	sysconf.Set(keyrpc.SRV_CONF_TLS_KEY, path.Join(keyrpc.PkgInGopath, "keyrpc", "rpc_test.key"))
-	sysconf.Set(keyrpc.SRV_CONF_PASS_SALT, hex.EncodeToString(salt[:]))
-	sysconf.Set(keyrpc.SRV_CONF_PASS_HASH, hex.EncodeToString(passHash[:]))
+	salt := keyserv.NewSalt()
+	passHash := keyserv.HashPassword(salt, keyserv.TEST_RPC_PASS)
+	sysconf := keyserv.GetDefaultKeySvcConf()
+	sysconf.Set(keyserv.SRV_CONF_KEYDB_DIR, keydbDir)
+	sysconf.Set(keyserv.SRV_CONF_TLS_CERT, path.Join(keyserv.PkgInGopath, "keyrpc", "rpc_test.crt"))
+	sysconf.Set(keyserv.SRV_CONF_TLS_KEY, path.Join(keyserv.PkgInGopath, "keyrpc", "rpc_test.key"))
+	sysconf.Set(keyserv.SRV_CONF_PASS_SALT, hex.EncodeToString(salt[:]))
+	sysconf.Set(keyserv.SRV_CONF_PASS_HASH, hex.EncodeToString(passHash[:]))
 	// To test email notification, simply start postfix at its default configuration
 	// You should receive four emails - two for key creation, two for key retrieval
 	// The emails are delivered to both user root and howard
-	sysconf.Set(keyrpc.SRV_CONF_MAIL_AGENT_AND_PORT, "localhost:25")
-	sysconf.Set(keyrpc.SRV_CONF_MAIL_FROM_ADDR, "cryptctl@localhost")
-	sysconf.Set(keyrpc.SRV_CONF_MAIL_RECIPIENTS, "root@localhost howard@localhost")
-	sysconf.Set(keyrpc.SRV_CONF_MAIL_CREATION_SUBJ, "key was created")
-	sysconf.Set(keyrpc.SRV_CONF_MAIL_CREATION_TEXT, "look out he's got a key")
-	sysconf.Set(keyrpc.SRV_CONF_MAIL_RETRIEVAL_SUBJ, "key was retrieved")
-	sysconf.Set(keyrpc.SRV_CONF_MAIL_RETRIEVAL_TEXT, "look out he's got a key again")
-	srvConf := keyrpc.CryptServiceConfig{}
+	sysconf.Set(keyserv.SRV_CONF_MAIL_AGENT_AND_PORT, "localhost:25")
+	sysconf.Set(keyserv.SRV_CONF_MAIL_FROM_ADDR, "cryptctl@localhost")
+	sysconf.Set(keyserv.SRV_CONF_MAIL_RECIPIENTS, "root@localhost howard@localhost")
+	sysconf.Set(keyserv.SRV_CONF_MAIL_CREATION_SUBJ, "key was created")
+	sysconf.Set(keyserv.SRV_CONF_MAIL_CREATION_TEXT, "look out he's got a key")
+	sysconf.Set(keyserv.SRV_CONF_MAIL_RETRIEVAL_SUBJ, "key was retrieved")
+	sysconf.Set(keyserv.SRV_CONF_MAIL_RETRIEVAL_TEXT, "look out he's got a key again")
+	srvConf := keyserv.CryptServiceConfig{}
 	srvConf.ReadFromSysconfig(sysconf)
-	mailer := keyrpc.Mailer{}
+	mailer := keyserv.Mailer{}
 	mailer.ReadFromSysconfig(sysconf)
 	if err := mailer.ValidateConfig(); err != nil {
 		t.Fatal(err)
 	}
-	srv, err := keyrpc.NewCryptServer(srvConf, mailer)
+	srv, err := keyserv.NewCryptServer(srvConf, mailer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,11 +105,11 @@ func TestEncryptDecrypt(t *testing.T) {
 	}()
 	// Make an RPC client
 	time.Sleep(2 * time.Second)
-	certContent, err := ioutil.ReadFile(path.Join(keyrpc.PkgInGopath, "keyrpc", "rpc_test.crt"))
+	certContent, err := ioutil.ReadFile(path.Join(keyserv.PkgInGopath, "keyrpc", "rpc_test.crt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := keyrpc.NewCryptClient("localhost", 3737, certContent)
+	client, err := keyserv.NewCryptClient("localhost", 3737, certContent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,12 +229,12 @@ func TestEncryptDecrypt(t *testing.T) {
 	var encUUID0, encUUID1 string
 	// Run encryption routine on two directories + two disks
 	// The first disk can be unlocked twice at the same time
-	encUUID0, err = EncryptFS(os.Stdout, client, keyrpc.TEST_RPC_PASS, srcDir0, "/dev/loop0", 2, REPORT_ALIVE_INTERVAL_SEC, 2)
+	encUUID0, err = EncryptFS(os.Stdout, client, keyserv.TEST_RPC_PASS, srcDir0, "/dev/loop0", 2, REPORT_ALIVE_INTERVAL_SEC, 2)
 	if err != nil || encUUID0 == "" {
 		t.Fatal(err, encUUID0)
 	}
 	//The second disk can only be unlocked once.
-	encUUID1, err = EncryptFS(os.Stdout, client, keyrpc.TEST_RPC_PASS, srcDir1, "/dev/loop1", 1, REPORT_ALIVE_INTERVAL_SEC, 2)
+	encUUID1, err = EncryptFS(os.Stdout, client, keyserv.TEST_RPC_PASS, srcDir1, "/dev/loop1", 1, REPORT_ALIVE_INTERVAL_SEC, 2)
 	if err != nil || encUUID1 == "" {
 		t.Fatal(err, encUUID1)
 	}
@@ -297,7 +297,7 @@ func TestEncryptDecrypt(t *testing.T) {
 	*/
 	resetDisks()
 	// Unlock disks with password
-	if err := ManOnlineUnlockFS(os.Stdout, client, keyrpc.TEST_RPC_PASS); err != nil {
+	if err := ManOnlineUnlockFS(os.Stdout, client, keyserv.TEST_RPC_PASS); err != nil {
 		t.Fatal(err)
 	}
 	checkSecret0()
@@ -305,10 +305,10 @@ func TestEncryptDecrypt(t *testing.T) {
 
 	// Shut down the server, start it once more and try unlocking the disks.
 	resetDisks()
-	if err := client.Shutdown(keyrpc.ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
+	if err := client.Shutdown(keyserv.ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
 		t.Fatal(err)
 	}
-	srv, err = keyrpc.NewCryptServer(srvConf, mailer)
+	srv, err = keyserv.NewCryptServer(srvConf, mailer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestEncryptDecrypt(t *testing.T) {
 	}()
 
 	// There's no need to make a new RPC client because the client does not hold a persistent connection
-	if err := ManOnlineUnlockFS(os.Stdout, client, keyrpc.TEST_RPC_PASS); err != nil {
+	if err := ManOnlineUnlockFS(os.Stdout, client, keyserv.TEST_RPC_PASS); err != nil {
 		t.Fatal(err)
 	}
 	checkSecret0()
@@ -346,7 +346,7 @@ func TestEncryptDecrypt(t *testing.T) {
 		t.Fatal(loop1Dev.UUID, encUUID1)
 	}
 	// Temporarily shut down server while requesting to unlock disks via automated method (not manual method)
-	if err := client.Shutdown(keyrpc.ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
+	if err := client.Shutdown(keyserv.ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
 		t.Fatal(err)
 	}
 	// Six unlock attempts will be made against different disks
@@ -397,7 +397,7 @@ func TestEncryptDecrypt(t *testing.T) {
 	}()
 
 	// Bring server online now
-	srv, err = keyrpc.NewCryptServer(srvConf, mailer)
+	srv, err = keyserv.NewCryptServer(srvConf, mailer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +516,7 @@ func TestEncryptDecrypt(t *testing.T) {
 		===============================================
 	*/
 	// First attempt erases an open & mounted file system
-	if err := EraseKey(os.Stdout, client, keyrpc.TEST_RPC_PASS, encUUID0); err != nil {
+	if err := EraseKey(os.Stdout, client, keyserv.TEST_RPC_PASS, encUUID0); err != nil {
 		t.Fatal(err)
 	}
 	// Second attempt erases a not yet mounted file system
@@ -526,7 +526,7 @@ func TestEncryptDecrypt(t *testing.T) {
 	if err := fs.CryptClose(loop1Crypt); err != nil {
 		t.Fatal(err)
 	}
-	if err := EraseKey(os.Stdout, client, keyrpc.TEST_RPC_PASS, encUUID1); err != nil {
+	if err := EraseKey(os.Stdout, client, keyserv.TEST_RPC_PASS, encUUID1); err != nil {
 		t.Fatal(err)
 	}
 	if len(srv.KeyDB.Records) != 0 {
@@ -562,7 +562,7 @@ func TestEncryptDecrypt(t *testing.T) {
 		t.Fatal("did not error")
 	}
 
-	if err := client.Shutdown(keyrpc.ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
+	if err := client.Shutdown(keyserv.ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
 		t.Fatal(err)
 	}
 }

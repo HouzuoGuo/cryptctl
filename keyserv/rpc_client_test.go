@@ -1,6 +1,6 @@
 // cryptctl - Copyright (c) 2016 SUSE Linux GmbH, Germany
 // This source code is licensed under GPL version 3 that can be found in LICENSE file.
-package keyrpc
+package keyserv
 
 import (
 	"github.com/HouzuoGuo/cryptctl/keydb"
@@ -26,7 +26,7 @@ func TestRPCCalls(t *testing.T) {
 	scClientConf, _ := sys.ParseSysconfig("")
 	scClientConf.Set(CLIENT_CONF_HOST, "localhost")
 	scClientConf.Set(CLIENT_CONF_PORT, strconv.Itoa(SRV_DEFAULT_PORT))
-	scClientConf.Set(CLIENT_CONF_CA, path.Join(PkgInGopath, "keyrpc", "rpc_test.crt"))
+	scClientConf.Set(CLIENT_CONF_CA, path.Join(PkgInGopath, "keyserv", "rpc_test.crt"))
 	scClient, err := NewCryptClientFromSysconfig(scClientConf)
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func BenchmarkManualRetrieveKey(b *testing.B) {
 func BenchmarkReportAlive(b *testing.B) {
 	client, tearDown := StartTestServer(b)
 	defer tearDown(b)
-	// Run all transactions in a single goroutine
+	// Run all benchmark operations in a single goroutine to know the real performance
 	oldMaxprocs := runtime.GOMAXPROCS(-1)
 	defer runtime.GOMAXPROCS(oldMaxprocs)
 	runtime.GOMAXPROCS(1)

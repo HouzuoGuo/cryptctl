@@ -48,8 +48,9 @@ var TagOperation = RegisterDefinedTag("42005c")
 const ValOperationCreate = 1
 
 var TagRequestPayload = RegisterDefinedTag("420079")
-
 var TagObjectType = RegisterDefinedTag("420057")
+
+const ValAttributeNameKeyName = "Name"
 
 const ValObjectTypeSymmetricKey = 2
 
@@ -81,6 +82,8 @@ const ValResultStatusFailed = 1
 const ValResultStatusPending = 2
 const ValResultStatusUndone = 3
 
+const ValResultReasonNotFound = 1
+
 var TagResponsePayload = RegisterDefinedTag("42007c")
 var TagUniqueID = RegisterDefinedTag("420094")
 
@@ -95,8 +98,13 @@ var TagKeyValue = RegisterDefinedTag("420045")
 var TagKeyMaterial = RegisterDefinedTag("420043")
 var TagCryptoAlgorithm = RegisterDefinedTag("420028")
 var TagCryptoLen = RegisterDefinedTag("42002a")
+var TagResultReason = RegisterDefinedTag("42007e")
+var TagResultMessage = RegisterDefinedTag("42007d")
+
+const ValKeyFormatTypeRaw = 1
+const ValCryptoAlgoAES = 3
 
 // Destroy request
-const ValOperationDestory = 20
+const ValOperationDestroy = 20
 
 // Destroy response - nothing more

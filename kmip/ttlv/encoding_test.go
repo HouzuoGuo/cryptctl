@@ -60,7 +60,11 @@ func TestCopyValue(t *testing.T) {
 }
 
 func TestEncodeDecode(t *testing.T) {
-	for i, data := range [][]byte{SampleCreateRequest, SampleCreateResponse, SampleGetRequest, SampleGetResponse, SampleDestroyRequest, SampleDestroyResponse} {
+	for i, data := range [][]byte{
+		SampleCreateRequest, SampleCreateResponseSuccess,
+		SampleGetRequest, SampleGetResponseSuccess, SampleGetResponseFailure,
+		SampleDestroyRequest, SampleDestroyResponseSuccess, SampleDestroyResponseFailure,
+	} {
 		decoded, _, err := DecodeAny(data)
 		t.Log(DebugTTLVItem(0, decoded))
 		if err != nil {

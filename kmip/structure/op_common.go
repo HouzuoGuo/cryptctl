@@ -216,20 +216,20 @@ func (cred *SCredential) DeserialiseFromTTLV(in ttlv.Item) error {
 
 // 420025
 type SCredentialValueUsernamePassword struct {
-	SUsername ttlv.Text // 420099
-	SPassword ttlv.Text // 4200a1
+	TUsername ttlv.Text // 420099
+	TPassword ttlv.Text // 4200a1
 }
 
 func (pass SCredentialValueUsernamePassword) SerialiseToTTLV() ttlv.Item {
-	pass.SUsername.Tag = TagUsername
-	pass.SPassword.Tag = TagPassword
-	return ttlv.NewStructure(TagCredentialValue, &pass.SUsername, &pass.SPassword)
+	pass.TUsername.Tag = TagUsername
+	pass.TPassword.Tag = TagPassword
+	return ttlv.NewStructure(TagCredentialValue, &pass.TUsername, &pass.TPassword)
 }
 
 func (pass *SCredentialValueUsernamePassword) DeserialiseFromTTLV(in ttlv.Item) error {
-	if err := DecodeStructItem(in, TagCredentialValue, TagUsername, &pass.SUsername); err != nil {
+	if err := DecodeStructItem(in, TagCredentialValue, TagUsername, &pass.TUsername); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagCredentialValue, TagPassword, &pass.SPassword); err != nil {
+	} else if err := DecodeStructItem(in, TagCredentialValue, TagPassword, &pass.TPassword); err != nil {
 		return err
 	}
 	return nil
@@ -334,22 +334,30 @@ func (respHeader *SResponseHeader) DeserialiseFromTTLV(in ttlv.Item) error {
 type SResponseBatchItem struct {
 	EOperation       ttlv.Enumeration // 42005c
 	EResultStatus    ttlv.Enumeration // 42007f
+	EResultReason    ttlv.Enumeration // 42007e
+	EResultMessage   ttlv.Text        // 42007d
 	SResponsePayload SerialisedItem   // reference to any 42007c
 }
 
 func (respItem SResponseBatchItem) SerialiseToTTLV() ttlv.Item {
 	respItem.EOperation.Tag = TagOperation
 	respItem.EResultStatus.Tag = TagResultStatus
-	return ttlv.NewStructure(TagBatchItem, &respItem.EOperation, &respItem.EResultStatus, respItem.SResponsePayload.(SerialisedItem).SerialiseToTTLV())
+	items := []ttlv.Item{&respItem.EOperation, &respItem.EResultStatus}
+	if respItem.EResultStatus.Value == ValResultStatusSuccess {
+		items = append(items, respItem.SResponsePayload.SerialiseToTTLV())
+	} else {
+		items = append(items, &respItem.EResultReason, &respItem.EResultMessage)
+	}
+	return ttlv.NewStructure(TagBatchItem, items...)
 }
 
 func (respItem *SResponseBatchItem) DeserialiseFromTTLV(in ttlv.Item) error {
 	if err := DecodeStructItem(in, TagBatchItem, TagOperation, &respItem.EOperation); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagBatchItem, TagOperation, &respItem.EOperation); err != nil {
-		return err
-	} else if err := DecodeStructItem(in, TagBatchItem, TagResponsePayload, &respItem.SResponsePayload); err != nil {
-		return err
 	}
+	DecodeStructItem(in, TagBatchItem, TagResultStatus, &respItem.EResultStatus)
+	DecodeStructItem(in, TagBatchItem, TagResultReason, &respItem.EResultReason)
+	DecodeStructItem(in, TagBatchItem, TagResultMessage, &respItem.EResultMessage)
+	DecodeStructItem(in, TagBatchItem, TagResponsePayload, &respItem.SResponsePayload)
 	return nil
 }

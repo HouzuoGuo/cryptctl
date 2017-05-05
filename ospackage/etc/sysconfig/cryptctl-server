@@ -91,3 +91,27 @@ EMAIL_KEY_RETRIEVAL_SUBJECT="An encrypted file system has been accessed"
 #
 # A greeting message shown in notification emails sent by key retrieval events.
 EMAIL_KEY_RETRIEVAL_GREETING="The key server has given out the following encryption key:"
+
+## Type:    string
+## Default: ""
+#
+# Host name or IP of KMIP server, if the key server should act as an KMIP client.
+KMIP_SERVER_HOST=""
+
+## Type:    integer
+## Default: ""
+#
+# Port number of KMIP service, if the key server should act as an KMIP client.
+KMIP_SERVER_PORT=""
+
+## Type:    string
+## Default: ""
+#
+# User name for KMIP access, if the key server should act as an KMIP client.
+KMIP_SERVER_USER=""
+
+## Type:    string
+## Default: ""
+#
+# Password for KMIP access, if the key server should act as an KMIP client.
+KMIP_SERVER_PASS=""

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/HouzuoGuo/cryptctl/keydb"
-	"github.com/HouzuoGuo/cryptctl/keyrpc"
+	"github.com/HouzuoGuo/cryptctl/keyserv"
 	"github.com/HouzuoGuo/cryptctl/routine"
 	"github.com/HouzuoGuo/cryptctl/sys"
 	"io/ioutil"
@@ -29,10 +29,10 @@ const (
 )
 
 // Interactively read server password from terminal, then use the password to ping RPC server.
-func ConnectToKeyServer(caFile, keyServer string) (client *keyrpc.CryptClient, password string, err error) {
+func ConnectToKeyServer(caFile, keyServer string) (client *keyserv.CryptClient, password string, err error) {
 	sys.LockMem()
 	serverAddr := keyServer
-	port := keyrpc.SRV_DEFAULT_PORT
+	port := keyserv.SRV_DEFAULT_PORT
 	if portIdx := strings.LastIndex(keyServer, ":"); portIdx != -1 {
 		portStr := keyServer[portIdx+1:]
 		portInt, err := strconv.Atoi(portStr)
@@ -52,13 +52,13 @@ func ConnectToKeyServer(caFile, keyServer string) (client *keyrpc.CryptClient, p
 		customCA = caFileContent
 	}
 	// Initialise client and test connectivity with the server
-	client, err = keyrpc.NewCryptClient(serverAddr, port, customCA)
+	client, err = keyserv.NewCryptClient(serverAddr, port, customCA)
 	if err != nil {
 		return nil, "", err
 	}
 	password = sys.InputPassword(true, "", "Enter key server's password (no echo)")
 	fmt.Fprintf(os.Stderr, "Establishing connection to %s on port %d...\n", serverAddr, port)
-	if err := client.Ping(keyrpc.PingRequest{Password: password}); err != nil {
+	if err := client.Ping(keyserv.PingRequest{Password: password}); err != nil {
 		return nil, "", err
 	}
 	return
@@ -74,7 +74,7 @@ func OpenKeyDB(recordUUID string) (*keydb.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Failed to read configuratioon file \"%s\" - %v", SERVER_CONFIG_PATH, err)
 	}
-	dbDir := sysconf.GetString(keyrpc.SRV_CONF_KEYDB_DIR, "")
+	dbDir := sysconf.GetString(keyserv.SRV_CONF_KEYDB_DIR, "")
 	if dbDir == "" {
 		return nil, errors.New("Key database directory is not configured. Is the server initialised?")
 	}
@@ -100,7 +100,7 @@ func InitKeyServer() error {
 
 	// Some of the mandatory questions will accept empty answers if a configuration already exists
 	var reconfigure bool
-	if sysconf.GetString(keyrpc.SRV_CONF_PASS_HASH, "") != "" {
+	if sysconf.GetString(keyserv.SRV_CONF_PASS_HASH, "") != "" {
 		reconfigure = true
 		if !sys.InputBool(`You appear to have already initialised the configuration on this key server.
 Would you like to re-configure it?`) {
@@ -133,19 +133,19 @@ Would you like to re-configure it?`) {
 		}
 	}
 	if pwd != "" {
-		newSalt := keyrpc.NewSalt()
-		sysconf.Set(keyrpc.SRV_CONF_PASS_SALT, hex.EncodeToString(newSalt[:]))
-		newPwd := keyrpc.HashPassword(newSalt, pwd)
-		sysconf.Set(keyrpc.SRV_CONF_PASS_HASH, hex.EncodeToString(newPwd[:]))
+		newSalt := keyserv.NewSalt()
+		sysconf.Set(keyserv.SRV_CONF_PASS_SALT, hex.EncodeToString(newSalt[:]))
+		newPwd := keyserv.HashPassword(newSalt, pwd)
+		sysconf.Set(keyserv.SRV_CONF_PASS_HASH, hex.EncodeToString(newPwd[:]))
 	}
 	// Ask for TLS certificate and key, or generate a self-signed one if user wishes to.
 	generateCert := false
 	if reconfigure {
 		// Server was previously initialised
 		if tlsCert := sys.InputAbsFilePath(false,
-			sysconf.GetString(keyrpc.SRV_CONF_TLS_CERT, ""),
+			sysconf.GetString(keyserv.SRV_CONF_TLS_CERT, ""),
 			"PEM-encoded TLS certificate or a certificate chain file"); tlsCert != "" {
-			sysconf.Set(keyrpc.SRV_CONF_TLS_CERT, tlsCert)
+			sysconf.Set(keyserv.SRV_CONF_TLS_CERT, tlsCert)
 		}
 	} else {
 		// Propose to generate a self-signed certificate
@@ -153,7 +153,7 @@ Would you like to re-configure it?`) {
 (leave blank to auto-generate self-signed certificate)`); tlsCert == "" {
 			generateCert = true
 		} else {
-			sysconf.Set(keyrpc.SRV_CONF_TLS_CERT, tlsCert)
+			sysconf.Set(keyserv.SRV_CONF_TLS_CERT, tlsCert)
 		}
 	}
 	if generateCert {
@@ -202,70 +202,70 @@ Important notes for client computers:
 
 `, certCommonName, certPath, keyPath, path.Base(certPath), certCommonName, path.Base(certPath))
 		// Point sysconfig values to the generated certificate
-		sysconf.Set(keyrpc.SRV_CONF_TLS_CERT, certPath)
-		sysconf.Set(keyrpc.SRV_CONF_TLS_KEY, keyPath)
+		sysconf.Set(keyserv.SRV_CONF_TLS_CERT, certPath)
+		sysconf.Set(keyserv.SRV_CONF_TLS_KEY, keyPath)
 	} else {
 		// If certificate was specified, ask for its key file
 		if tlsKey := sys.InputAbsFilePath(!reconfigure,
-			sysconf.GetString(keyrpc.SRV_CONF_TLS_KEY, ""),
+			sysconf.GetString(keyserv.SRV_CONF_TLS_KEY, ""),
 			"PEM-encoded TLS certificate key that corresponds to the certificate"); tlsKey != "" {
-			sysconf.Set(keyrpc.SRV_CONF_TLS_KEY, tlsKey)
+			sysconf.Set(keyserv.SRV_CONF_TLS_KEY, tlsKey)
 		}
 	}
 
 	// Walk through the remaining mandatory configuration keys
 	if listenAddr := sys.Input(false,
-		sysconf.GetString(keyrpc.SRV_CONF_LISTEN_ADDR, ""),
+		sysconf.GetString(keyserv.SRV_CONF_LISTEN_ADDR, ""),
 		"IP address for the server to listen on (0.0.0.0 to listen on all network interfaces)"); listenAddr != "" {
-		sysconf.Set(keyrpc.SRV_CONF_LISTEN_ADDR, listenAddr)
+		sysconf.Set(keyserv.SRV_CONF_LISTEN_ADDR, listenAddr)
 	}
 	if listenPort := sys.InputInt(false,
-		sysconf.GetInt(keyrpc.SRV_CONF_LISTEN_PORT, 0), 1, 65535,
+		sysconf.GetInt(keyserv.SRV_CONF_LISTEN_PORT, 0), 1, 65535,
 		"TCP port number to listen on"); listenPort != 0 {
-		sysconf.Set(keyrpc.SRV_CONF_LISTEN_PORT, listenPort)
+		sysconf.Set(keyserv.SRV_CONF_LISTEN_PORT, listenPort)
 	}
 	if keyDBDir := sys.InputAbsFilePath(true,
-		sysconf.GetString(keyrpc.SRV_CONF_KEYDB_DIR, ""),
+		sysconf.GetString(keyserv.SRV_CONF_KEYDB_DIR, ""),
 		"Key database directory"); keyDBDir != "" {
-		sysconf.Set(keyrpc.SRV_CONF_KEYDB_DIR, keyDBDir)
+		sysconf.Set(keyserv.SRV_CONF_KEYDB_DIR, keyDBDir)
 	}
 	// Walk through optional email settings
 	fmt.Println("\nTo enable Email notifications, enter the following parameters:")
 	if mta := sys.Input(false,
-		sysconf.GetString(keyrpc.SRV_CONF_MAIL_AGENT_AND_PORT, ""),
+		sysconf.GetString(keyserv.SRV_CONF_MAIL_AGENT_AND_PORT, ""),
 		"SMTP server name (not IP address) and port such as \"example.com:25\""); mta != "" {
-		sysconf.Set(keyrpc.SRV_CONF_MAIL_AGENT_AND_PORT, mta)
+		sysconf.Set(keyserv.SRV_CONF_MAIL_AGENT_AND_PORT, mta)
 	}
-	if sysconf.GetString(keyrpc.SRV_CONF_MAIL_AGENT_AND_PORT, "") != "" {
+	if sysconf.GetString(keyserv.SRV_CONF_MAIL_AGENT_AND_PORT, "") != "" {
 		if fromAddr := sys.Input(false,
-			sysconf.GetString(keyrpc.SRV_CONF_MAIL_FROM_ADDR, ""),
+			sysconf.GetString(keyserv.SRV_CONF_MAIL_FROM_ADDR, ""),
 			"Notification email's FROM address such as \"root@example.com\""); fromAddr != "" {
-			sysconf.Set(keyrpc.SRV_CONF_MAIL_FROM_ADDR, fromAddr)
+			sysconf.Set(keyserv.SRV_CONF_MAIL_FROM_ADDR, fromAddr)
 		}
 		if recipients := sys.Input(false,
-			sysconf.GetString(keyrpc.SRV_CONF_MAIL_RECIPIENTS, ""),
+			sysconf.GetString(keyserv.SRV_CONF_MAIL_RECIPIENTS, ""),
 			"Space-separated notification recipients such as \"admin@example.com\""); recipients != "" {
-			sysconf.Set(keyrpc.SRV_CONF_MAIL_RECIPIENTS, recipients)
+			sysconf.Set(keyserv.SRV_CONF_MAIL_RECIPIENTS, recipients)
 		}
 		if creationSubj := sys.Input(false,
 			"",
 			"Subject of key-creation notification email"); creationSubj != "" {
-			sysconf.Set(keyrpc.SRV_CONF_MAIL_CREATION_SUBJ, creationSubj)
+			sysconf.Set(keyserv.SRV_CONF_MAIL_CREATION_SUBJ, creationSubj)
 		}
 		if creationText := sys.Input(false,
 			"",
 			"Text of key-creation notification email"); creationText != "" {
-			sysconf.Set(keyrpc.SRV_CONF_MAIL_CREATION_TEXT, creationText)
+			sysconf.Set(keyserv.SRV_CONF_MAIL_CREATION_TEXT, creationText)
 		}
 		if retrievalSubj := sys.Input(false,
 			"",
 			"Subject of key-retrieval notification email"); retrievalSubj != "" {
-			sysconf.Set(keyrpc.SRV_CONF_MAIL_RETRIEVAL_SUBJ, retrievalSubj)
+			sysconf.Set(keyserv.SRV_CONF_MAIL_RETRIEVAL_SUBJ, retrievalSubj)
 		}
 		if retrievalText := sys.Input(false,
 			"",
 			"Text of key-retrieval notification email"); retrievalText != "" {
-			sysconf.Set(keyrpc.SRV_CONF_MAIL_RETRIEVAL_TEXT, retrievalText)
+			sysconf.Set(keyserv.SRV_CONF_MAIL_RETRIEVAL_TEXT, retrievalText)
 		}
 	}
 	if err := ioutil.WriteFile(SERVER_CONFIG_PATH, []byte(sysconf.ToText()), 0600); err != nil {
@@ -314,13 +314,13 @@ func KeyRPCDaemon() error {
 	if err != nil {
 		return fmt.Errorf("Failed to read configuratioon file \"%s\" - %v", SERVER_CONFIG_PATH, err)
 	}
-	srvConf := keyrpc.CryptServiceConfig{}
+	srvConf := keyserv.CryptServiceConfig{}
 	if err := srvConf.ReadFromSysconfig(sysconf); err != nil {
 		return fmt.Errorf("Failed to load configuration from file \"%s\" - %v", SERVER_CONFIG_PATH, err)
 	}
-	mailer := keyrpc.Mailer{}
+	mailer := keyserv.Mailer{}
 	mailer.ReadFromSysconfig(sysconf)
-	srv, err := keyrpc.NewCryptServer(srvConf, mailer)
+	srv, err := keyserv.NewCryptServer(srvConf, mailer)
 	if err != nil {
 		return fmt.Errorf("Failed to initialise server - %v", err)
 	}
@@ -368,7 +368,7 @@ func EditKey(uuid string) error {
 	if err != nil {
 		return err
 	}
-	rec := db.Records[uuid]
+	rec := db.RecordsByUUID[uuid]
 	// Similar to the encryption routine, ask user all the configuration questions.
 	newMountPoint := sys.Input(false, rec.MountPoint, "Mount point")
 	if newMountPoint != "" {
@@ -411,7 +411,7 @@ func ShowKey(uuid string) error {
 	if err != nil {
 		return err
 	}
-	rec := db.Records[uuid]
+	rec := db.RecordsByUUID[uuid]
 	rec.RemoveDeadHosts()
 	fmt.Printf("%-34s%s\n", "UUID", rec.UUID)
 	fmt.Printf("%-34s%s\n", "Mount Point", rec.MountPoint)

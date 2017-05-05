@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+const (
+	CurrentRecordVersion = 1
+)
+
 // A client computer actively using an encryption key regularly sends alive messages to the server.
 type AliveMessage struct {
 	Hostname  string // client computer's host name as reported by itself
@@ -24,6 +28,10 @@ The binary encoding method is intentionally chosen to deter users from manually 
 */
 type Record struct {
 	UUID             string                    // partition UUID
+	ID               string                    // KMIP key ID
+	KeyOnKMIP        bool                      // true only if key content is located on an external KMIP server
+	CreationTime     time.Time                 // creation time
+	Version          int                       // Record version
 	Key              []byte                    // encryption key in plain form
 	MountPoint       string                    // mount point on client computer
 	MountOptions     []string                  // file system's mount options

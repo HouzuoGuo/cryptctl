@@ -21,7 +21,7 @@ const (
 )
 
 // Forcibly unlock all file systems that have their keys on a key server.
-func ManOnlineUnlockFS(progressOut io.Writer, client *keyrpc.CryptClient, password string) error {
+func ManOnlineUnlockFS(progressOut io.Writer, client *keyserv.CryptClient, password string) error {
 	sys.LockMem()
 	// Collect information about all encrypted file systems
 	blockDevs := fs.GetBlockDevices()
@@ -37,7 +37,7 @@ func ManOnlineUnlockFS(progressOut io.Writer, client *keyrpc.CryptClient, passwo
 		return errors.New("Cannot find any more encrypted file systems.")
 	}
 	hostname, _ := sys.GetHostnameAndIP()
-	resp, err := client.ManualRetrieveKey(keyrpc.ManualRetrieveKeyReq{
+	resp, err := client.ManualRetrieveKey(keyserv.ManualRetrieveKeyReq{
 		UUIDs:    reqUUIDs,
 		Hostname: hostname,
 		Password: password,
@@ -124,7 +124,7 @@ func UnlockFS(progressOut io.Writer, rec keydb.Record) error {
 Make continuous attempts to retrieve encryption key from key server to unlock a file system specified by the UUID.
 If maxRetrySec is zero or negative, then only one attempt will be made to unlock the file system.
 */
-func AutoOnlineUnlockFS(progressOut io.Writer, client *keyrpc.CryptClient, uuid string, maxRetrySec int64) error {
+func AutoOnlineUnlockFS(progressOut io.Writer, client *keyserv.CryptClient, uuid string, maxRetrySec int64) error {
 	sys.LockMem()
 	// Find out UUID of the block device
 	blkDevs := fs.GetBlockDevices()
@@ -141,7 +141,7 @@ func AutoOnlineUnlockFS(progressOut io.Writer, client *keyrpc.CryptClient, uuid 
 	for {
 		// Always send the up-to-date hostname in RPC request
 		hostname, _ := sys.GetHostnameAndIP()
-		resp, err := client.AutoRetrieveKey(keyrpc.AutoRetrieveKeyReq{
+		resp, err := client.AutoRetrieveKey(keyserv.AutoRetrieveKeyReq{
 			Hostname: hostname,
 			UUIDs:    []string{blkDev.UUID},
 		})
@@ -183,13 +183,13 @@ func AutoOnlineUnlockFS(progressOut io.Writer, client *keyrpc.CryptClient, uuid 
 Continuously send alive reports to server to indicate that this computer is still holding onto the encrypted disk.
 Block caller until the program quits or server rejects this computer.
 */
-func ReportAlive(progressOut io.Writer, client *keyrpc.CryptClient, uuid string) error {
+func ReportAlive(progressOut io.Writer, client *keyserv.CryptClient, uuid string) error {
 	fmt.Fprintf(progressOut, "ReportAlive: begin sending messages for encrypted disk \"%s\"\n", uuid)
 	numFailures := 0
 	for {
 		// Always send the up-to-date hostname in RPC request
 		hostname, _ := sys.GetHostnameAndIP()
-		rejected, err := client.ReportAlive(keyrpc.ReportAliveReq{
+		rejected, err := client.ReportAlive(keyserv.ReportAliveReq{
 			Hostname: hostname,
 			UUIDs:    []string{uuid},
 		})
@@ -218,7 +218,7 @@ func ReportAlive(progressOut io.Writer, client *keyrpc.CryptClient, uuid string)
 Erase encryption metadata on the specified disk, and then ask server to erase its key.
 This process renders all data on the disk irreversibly lost.
 */
-func EraseKey(progressOut io.Writer, client *keyrpc.CryptClient, password, uuid string) error {
+func EraseKey(progressOut io.Writer, client *keyserv.CryptClient, password, uuid string) error {
 	// Find the device node and erase the encryption metadata
 	blkDevs := fs.GetBlockDevices()
 	hostDev, foundHost := blkDevs.GetByCriteria(uuid, "", "", "", "")
@@ -245,7 +245,7 @@ func EraseKey(progressOut io.Writer, client *keyrpc.CryptClient, password, uuid 
 	}
 	// After metadata is erased, ask server to remove its key record as well.
 	hostname, _ := sys.GetHostnameAndIP()
-	if err := client.EraseKey(keyrpc.EraseKeyReq{Password: password, Hostname: hostname, UUID: uuid}); err != nil {
+	if err := client.EraseKey(keyserv.EraseKeyReq{Password: password, Hostname: hostname, UUID: uuid}); err != nil {
 		return err
 	}
 	fmt.Fprintf(progressOut, "Encryption header has been wiped successfully, data in \"%s\" (%s) is now irreversibly lost.\n",

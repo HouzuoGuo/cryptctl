@@ -155,7 +155,7 @@ func EncryptFSPreCheck(srcDir, encDisk string) error {
 Set up encryption on a file system using a randomly generated key and upload the key to key server. Return UUID of
 now encrypted block device and any error encountered during the routine.
 */
-func EncryptFS(progressOut io.Writer, client *keyrpc.CryptClient,
+func EncryptFS(progressOut io.Writer, client *keyserv.CryptClient,
 	password, srcDir, encDisk string,
 	keyMaxActive, keyAliveIntervalSec, keyAliveCount int) (string, error) {
 	sys.LockMem()
@@ -252,7 +252,7 @@ func EncryptFS(progressOut io.Writer, client *keyrpc.CryptClient,
 		AliveIntervalSec: keyAliveIntervalSec,
 		AliveCount:       keyAliveCount,
 	}
-	if err := client.SaveKey(keyrpc.SaveKeyReq{
+	if err := client.SaveKey(keyserv.SaveKeyReq{
 		Password: password,
 		Record:   keyRecord,
 	}); err != nil {

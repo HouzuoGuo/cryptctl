@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/HouzuoGuo/cryptctl/keydb"
-	"github.com/HouzuoGuo/cryptctl/keyrpc"
+	"github.com/HouzuoGuo/cryptctl/keyserv"
 	"github.com/HouzuoGuo/cryptctl/routine"
 	"github.com/HouzuoGuo/cryptctl/sys"
 	"io/ioutil"
@@ -64,15 +64,15 @@ func PromptForKeyServer() (sysconf *sys.Sysconfig, caFile, host string, port int
 	if err != nil {
 		return
 	}
-	defaultHost := sysconf.GetString(keyrpc.CLIENT_CONF_HOST, "")
+	defaultHost := sysconf.GetString(keyserv.CLIENT_CONF_HOST, "")
 	if host = sys.Input(true, defaultHost, MSG_ASK_HOSTNAME); host == "" {
 		host = defaultHost
 	}
-	defaultPort := sysconf.GetInt(keyrpc.CLIENT_CONF_PORT, keyrpc.SRV_DEFAULT_PORT)
+	defaultPort := sysconf.GetInt(keyserv.CLIENT_CONF_PORT, keyserv.SRV_DEFAULT_PORT)
 	if port = sys.InputInt(true, defaultPort, 1, 65535, MSG_ASK_PORT); port == 0 {
 		port = defaultPort
 	}
-	defaultCAFile := sysconf.GetString(keyrpc.CLIENT_CONF_CA, "")
+	defaultCAFile := sysconf.GetString(keyserv.CLIENT_CONF_CA, "")
 	if caFile = sys.InputAbsFilePath(false, defaultCAFile, MSG_ASK_CA); caFile == "" {
 		caFile = defaultCAFile
 	}
@@ -88,7 +88,7 @@ func EncryptFS() error {
 	if err != nil {
 		return err
 	}
-	storedHost := sysconf.GetString(keyrpc.CLIENT_CONF_HOST, "")
+	storedHost := sysconf.GetString(keyserv.CLIENT_CONF_HOST, "")
 	if storedHost != "" && host != storedHost {
 		if !sys.InputBool(MSG_ASK_DIFF_HOST, storedHost, host) {
 			return errors.New(MSG_E_CANCELLED)
@@ -137,9 +137,9 @@ func EncryptFS() error {
 	}
 
 	// Put latest key server details into client configuration file
-	sysconf.Set(keyrpc.CLIENT_CONF_HOST, host)
-	sysconf.Set(keyrpc.CLIENT_CONF_PORT, strconv.Itoa(port))
-	sysconf.Set(keyrpc.CLIENT_CONF_CA, caFile)
+	sysconf.Set(keyserv.CLIENT_CONF_HOST, host)
+	sysconf.Set(keyserv.CLIENT_CONF_PORT, strconv.Itoa(port))
+	sysconf.Set(keyserv.CLIENT_CONF_CA, caFile)
 	if err := ioutil.WriteFile(CLIENT_CONFIG_PATH, []byte(sysconf.ToText()), 0600); err != nil {
 		return fmt.Errorf(MSG_E_SAVE_SYSCONF, CLIENT_CONFIG_PATH, err)
 	}
@@ -195,11 +195,11 @@ func AutoOnlineUnlockFS(uuid string) error {
 	if err != nil {
 		return err
 	}
-	if sysconf.GetString(keyrpc.CLIENT_CONF_HOST, "") == "" {
+	if sysconf.GetString(keyserv.CLIENT_CONF_HOST, "") == "" {
 		fmt.Println(MSG_UNLOCK_IS_NOP)
 		return nil
 	}
-	client, err := keyrpc.NewCryptClientFromSysconfig(sysconf)
+	client, err := keyserv.NewCryptClientFromSysconfig(sysconf)
 	if err != nil {
 		return err
 	}
@@ -219,15 +219,15 @@ func EraseKey() error {
 	if err != nil {
 		return err
 	}
-	host := sysconf.GetString(keyrpc.CLIENT_CONF_HOST, "")
+	host := sysconf.GetString(keyserv.CLIENT_CONF_HOST, "")
 	if host == "" {
 		return errors.New(MSG_E_ERASE_NO_CONF)
 	}
-	port := sysconf.GetInt(keyrpc.CLIENT_CONF_PORT, 3737)
+	port := sysconf.GetInt(keyserv.CLIENT_CONF_PORT, 3737)
 	if port == 0 {
 		return errors.New(MSG_E_ERASE_NO_CONF)
 	}
-	caFile := sysconf.GetString(keyrpc.CLIENT_CONF_CA, "")
+	caFile := sysconf.GetString(keyserv.CLIENT_CONF_CA, "")
 	client, password, err := ConnectToKeyServer(caFile, fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		return err

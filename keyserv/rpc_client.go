@@ -1,6 +1,6 @@
 // cryptctl - Copyright (c) 2016 SUSE Linux GmbH, Germany
 // This source code is licensed under GPL version 3 that can be found in LICENSE file.
-package keyrpc
+package keyserv
 
 import (
 	"crypto/tls"
@@ -175,8 +175,8 @@ func StartTestServer(tb testing.TB) (client *CryptClient, tearDown func(testing.
 	passHash := HashPassword(salt, TEST_RPC_PASS)
 	sysconf := GetDefaultKeySvcConf()
 	sysconf.Set(SRV_CONF_KEYDB_DIR, keydbDir)
-	sysconf.Set(SRV_CONF_TLS_CERT, path.Join(PkgInGopath, "keyrpc", "rpc_test.crt"))
-	sysconf.Set(SRV_CONF_TLS_KEY, path.Join(PkgInGopath, "keyrpc", "rpc_test.key"))
+	sysconf.Set(SRV_CONF_TLS_CERT, path.Join(PkgInGopath, "keyserv", "rpc_test.crt"))
+	sysconf.Set(SRV_CONF_TLS_KEY, path.Join(PkgInGopath, "keyserv", "rpc_test.key"))
 	sysconf.Set(SRV_CONF_PASS_SALT, hex.EncodeToString(salt[:]))
 	sysconf.Set(SRV_CONF_PASS_HASH, hex.EncodeToString(passHash[:]))
 	// Start server
