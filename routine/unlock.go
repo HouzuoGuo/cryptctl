@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"github.com/HouzuoGuo/cryptctl/fs"
 	"github.com/HouzuoGuo/cryptctl/keydb"
-	"github.com/HouzuoGuo/cryptctl/keyrpc"
+	"github.com/HouzuoGuo/cryptctl/keyserv"
 	"github.com/HouzuoGuo/cryptctl/sys"
 	"io"
 	"os"
@@ -37,10 +37,14 @@ func ManOnlineUnlockFS(progressOut io.Writer, client *keyserv.CryptClient, passw
 		return errors.New("Cannot find any more encrypted file systems.")
 	}
 	hostname, _ := sys.GetHostnameAndIP()
+	salt, err := client.GetSalt()
+	if err != nil {
+		return err
+	}
 	resp, err := client.ManualRetrieveKey(keyserv.ManualRetrieveKeyReq{
 		UUIDs:    reqUUIDs,
 		Hostname: hostname,
-		Password: password,
+		Password: keyserv.HashPassword(salt, password),
 	})
 	if err != nil {
 		return err
@@ -245,7 +249,11 @@ func EraseKey(progressOut io.Writer, client *keyserv.CryptClient, password, uuid
 	}
 	// After metadata is erased, ask server to remove its key record as well.
 	hostname, _ := sys.GetHostnameAndIP()
-	if err := client.EraseKey(keyserv.EraseKeyReq{Password: password, Hostname: hostname, UUID: uuid}); err != nil {
+	salt, err := client.GetSalt()
+	if err != nil {
+		return err
+	}
+	if err := client.EraseKey(keyserv.EraseKeyReq{Password: keyserv.HashPassword(salt, password), Hostname: hostname, UUID: uuid}); err != nil {
 		return err
 	}
 	fmt.Fprintf(progressOut, "Encryption header has been wiped successfully, data in \"%s\" (%s) is now irreversibly lost.\n",

@@ -7,7 +7,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/HouzuoGuo/cryptctl/fs"
 	"github.com/HouzuoGuo/cryptctl/kmip/structure"
 	"github.com/HouzuoGuo/cryptctl/kmip/ttlv"
 	"io"
@@ -21,7 +20,8 @@ const (
 		Both server and client refuse to accept a structure larger than this number. The number is
 		reasonable and big enough for all three operations supported by server and client: create, get, and destroy.
 	*/
-	MaxKMIPStructLen = 65536
+	MaxKMIPStructLen   = 65536
+	KMIPAESKeySizeBits = 256 // The only kind of AES encryption key the KMIP server and client will expect to use
 )
 
 /*
@@ -48,7 +48,7 @@ func NewKMIPClient(host string, port int, username, password string, caCertPEM [
 		Password:   password,
 		TLSConfig:  new(tls.Config),
 	}
-	if caCertPEM != nil || len(caCertPEM) > 0 {
+	if caCertPEM != nil && len(caCertPEM) > 0 {
 		// Use custom CA
 		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM(caCertPEM) {
@@ -82,8 +82,12 @@ func ReadFullTTLV(reader io.Reader) (ttlv.Item, error) {
 	}
 	// Read remainder of request structure
 	ttlValue = make([]byte, structLen)
-	if _, err := reader.Read(ttlValue); err != nil {
-		return nil, err
+	if n, err := reader.Read(ttlValue); err != nil {
+		if int32(n) == structLen {
+			err = nil
+		} else {
+			return nil, err
+		}
 	}
 	// Assemble TTL header and structure value for deserialisation
 	fullTTLV = make([]byte, 8+len(ttlValue))
@@ -105,7 +109,9 @@ func (client *KMIPClient) MakeRequest(request structure.SerialisedItem) (structu
 		return nil, fmt.Errorf("KMIPClient.MakeRequest: connection to \"%s\" failed - %v", addr, err)
 	}
 	defer conn.Close()
-	if _, err = conn.Write(ttlv.EncodeAny(request.SerialiseToTTLV())); err != nil {
+	serialisedRequest := request.SerialiseToTTLV()
+	encodedRequest := ttlv.EncodeAny(serialisedRequest)
+	if _, err = conn.Write(encodedRequest); err != nil {
 		return nil, fmt.Errorf("KMIPClient.MakeRequest: failed to write request - %v", err)
 	}
 	ttlvResp, err := ReadFullTTLV(conn)
@@ -163,11 +169,13 @@ func ResponseItemToError(resp structure.SResponseBatchItem) error {
 func (client *KMIPClient) CreateKey(keyName string) (id string, err error) {
 	defer func() {
 		// In the unlikely case that a misbehaving server causes client to crash.
-		if r := recover(); r != nil {
-			msg := fmt.Sprintf("KMIPClient.CreateKey: the function crashed due to programming error - %v", r)
-			log.Print(msg)
-			err = errors.New(msg)
-		}
+		/*
+			if r := recover(); r != nil {
+				msg := fmt.Sprintf("KMIPClient.CreateKey: the function crashed due to programming error - %v", r)
+				log.Print(msg)
+				err = errors.New(msg)
+			}
+		*/
 	}()
 	resp, err := client.MakeRequest(&structure.SCreateRequest{
 		SRequestHeader: client.GetRequestHeader(),
@@ -179,15 +187,24 @@ func (client *KMIPClient) CreateKey(keyName string) (id string, err error) {
 					Attributes: []structure.SAttribute{
 						{
 							TAttributeName: ttlv.Text{Value: structure.ValAttributeNameCryptoAlg},
-							AttributeValue: &ttlv.Enumeration{Value: structure.ValCryptoAlgoAES},
+							AttributeValue: &ttlv.Enumeration{
+								TTL:   ttlv.TTL{Tag: structure.TagAttributeValue},
+								Value: structure.ValCryptoAlgoAES,
+							},
 						},
 						{
 							TAttributeName: ttlv.Text{Value: structure.ValAttributeNameCryptoLen},
-							AttributeValue: &ttlv.Enumeration{Value: fs.LUKS_KEY_SIZE_I},
+							AttributeValue: &ttlv.Integer{
+								TTL:   ttlv.TTL{Tag: structure.TagAttributeValue},
+								Value: KMIPAESKeySizeBits, // keep in mind that key size is in bits
+							},
 						},
 						{
 							TAttributeName: ttlv.Text{Value: structure.ValAttributeNameCryptoUsageMask},
-							AttributeValue: &ttlv.Enumeration{Value: structure.MaskCryptoUsageEncrypt | structure.MaskCryptoUsageDecrypt},
+							AttributeValue: &ttlv.Integer{
+								TTL:   ttlv.TTL{Tag: structure.TagAttributeValue},
+								Value: structure.MaskCryptoUsageEncrypt | structure.MaskCryptoUsageDecrypt,
+							},
 						},
 						{
 							TAttributeName: ttlv.Text{Value: structure.ValAttributeNameKeyName},
@@ -220,7 +237,7 @@ func (client *KMIPClient) GetKey(id string) (key []byte, err error) {
 	defer func() {
 		// In the unlikely case that a misbehaving server causes client to crash.
 		if r := recover(); r != nil {
-			msg := fmt.Sprintf("KMIPClient.GetKey: (ID %d) the function crashed due to programming error - %v", id, r)
+			msg := fmt.Sprintf("KMIPClient.GetKey: (ID %s) the function crashed due to programming error - %v", id, r)
 			log.Print(msg)
 			err = errors.New(msg)
 		}
@@ -242,8 +259,8 @@ func (client *KMIPClient) GetKey(id string) (key []byte, err error) {
 		return
 	}
 	key = typedResp.SResponseBatchItem.SResponsePayload.(*structure.SResponsePayloadGet).SSymmetricKey.SKeyBlock.SKeyValue.BKeyMaterial.Value
-	if key == nil || len(key) != fs.LUKS_KEY_SIZE_I {
-		err = errors.New("KMIPClient.GetKey: (ID %d) key content looks wrong")
+	if key == nil || len(key) != KMIPAESKeySizeBits/8 {
+		err = fmt.Errorf("KMIPClient.GetKey: (ID %s) key content looks wrong (%d)", id, len(key))
 	}
 	return
 }
@@ -253,7 +270,7 @@ func (client *KMIPClient) DestroyKey(id string) (err error) {
 	defer func() {
 		// In the unlikely case that a misbehaving server causes client to crash.
 		if r := recover(); r != nil {
-			msg := fmt.Sprintf("KMIPClient.GetKey: (ID %d) the function crashed due to programming error - %v", id, r)
+			msg := fmt.Sprintf("KMIPClient.GetKey: (ID %s) the function crashed due to programming error - %v", id, r)
 			log.Print(msg)
 			err = errors.New(msg)
 		}
@@ -270,6 +287,6 @@ func (client *KMIPClient) DestroyKey(id string) (err error) {
 	if err != nil {
 		return
 	}
-	err = ResponseItemToError(resp.(*structure.SGetResponse).SResponseBatchItem)
+	err = ResponseItemToError(resp.(*structure.SDestroyResponse).SResponseBatchItem)
 	return
 }

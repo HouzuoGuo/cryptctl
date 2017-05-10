@@ -51,7 +51,7 @@ Caller should consider ot lock memory.
 */
 func OpenDBOneRecord(dir, recordUUID string) (db *DB, err error) {
 	if err := os.MkdirAll(dir, DB_DIR_FILE_MODE); err != nil {
-		return nil, fmt.Errorf("OpenDB: failed to make db directory \"%s\" - %v", dir, err)
+		return nil, fmt.Errorf("OpenDBOneRecord: failed to make db directory \"%s\" - %v", dir, err)
 	}
 	db = &DB{Dir: dir, Lock: new(sync.RWMutex), RecordsByUUID: map[string]Record{}, RecordsByID: map[string]Record{}}
 	keyRecord, err := db.LoadRecord(path.Join(dir, recordUUID))
@@ -81,7 +81,7 @@ func (db *DB) ReloadDB() error {
 	db.RecordsByID = make(map[string]Record)
 	keyFiles, err := ioutil.ReadDir(db.Dir)
 	if err != nil {
-		return fmt.Errorf("ReloadDB: failed to read directory \"%s\" - %v", db.Dir, err)
+		return fmt.Errorf("DB.ReloadDB: failed to read directory \"%s\" - %v", db.Dir, err)
 	}
 
 	var lastSequenceNum int64
@@ -273,11 +273,11 @@ func (db *DB) Erase(uuid string) error {
 	db.Lock.Lock()
 	defer db.Lock.Unlock()
 	if _, exists := db.RecordsByUUID[uuid]; !exists {
-		return fmt.Errorf("DB.Delete: record '%s' does not exist", uuid)
+		return fmt.Errorf("DB.Erase: record '%s' does not exist", uuid)
 	}
 	delete(db.RecordsByUUID, uuid)
 	if err := fs.SecureErase(path.Join(db.Dir, uuid), true); err != nil {
-		return fmt.Errorf("DB.Delete: failed to delete db record for %s - %v", uuid, err)
+		return fmt.Errorf("DB.Erase: failed to delete db record for %s - %v", uuid, err)
 	}
 	return nil
 }

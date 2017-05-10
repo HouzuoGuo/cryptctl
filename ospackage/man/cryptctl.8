@@ -58,6 +58,11 @@ key server closely tracks its IP, host name, and timestamp, in order to determin
 the key; if the upper limit number of computers is reached, the key will no longer be handed out automatically; system
 administrator can always retrieve encryption keys by using key server's access password.
 
+.I cryptctl
+can utilise an external key management appliance that understands KMIP v1.3 to store the actual encryption keys. The server
+setup sequence asks the system administrator for KMIP connectivity details such as host name, port, certificate, and user
+credentials. Of course cryptctl functions perfectly well without using an external key management appliance.
+
 .SH KEY SERVER ACTIONS
 .SS
 .TP
@@ -83,7 +88,7 @@ the input parameters, and after a final confirmation prompt, encryption routine 
 .IP \n[step]
 Wipe the partition to be encrypted.
 .IP \n+[step]
-Generate a 512-bit encryption key from cryptographically secure random source.
+Generate a 512-bit encryption key from cryptographically secure random source provided by internal (auto-launched) or external KMIP service.
 .IP \n+[step]
 Set up LUKS metadata on the partition to encrypt, then make new file system on it, matching the type of that from the
 directory to encrypt.
@@ -153,6 +158,9 @@ to every operation:
 
 If you wish to maintain a certificate infrastructure for multiple key servers in a production environment, the YaST
 Certificate Management program may come in handy.
+
+The server can optionally enforce verification of clients' certificate, should you decide to let server verify clients'
+identity before serving them encryption keys. The behaviour is setup during server's and client's setup sequence.
 
 .SH CHANGE/REVOKE OR DELETE ENCRYPTION KEY
 If you decide to revoke or change encryption key for an encrypted file system, please back up the encrypted data onto a

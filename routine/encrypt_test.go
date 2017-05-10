@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"github.com/HouzuoGuo/cryptctl/fs"
 	"github.com/HouzuoGuo/cryptctl/keydb"
-	"github.com/HouzuoGuo/cryptctl/keyrpc"
+	"github.com/HouzuoGuo/cryptctl/keyserv"
 	"github.com/HouzuoGuo/cryptctl/sys"
 	"io/ioutil"
 	"log"
@@ -75,8 +75,8 @@ func TestEncryptDecrypt(t *testing.T) {
 	passHash := keyserv.HashPassword(salt, keyserv.TEST_RPC_PASS)
 	sysconf := keyserv.GetDefaultKeySvcConf()
 	sysconf.Set(keyserv.SRV_CONF_KEYDB_DIR, keydbDir)
-	sysconf.Set(keyserv.SRV_CONF_TLS_CERT, path.Join(keyserv.PkgInGopath, "keyrpc", "rpc_test.crt"))
-	sysconf.Set(keyserv.SRV_CONF_TLS_KEY, path.Join(keyserv.PkgInGopath, "keyrpc", "rpc_test.key"))
+	sysconf.Set(keyserv.SRV_CONF_TLS_CERT, path.Join(keyserv.PkgInGopath, "keyserv", "rpc_test.crt"))
+	sysconf.Set(keyserv.SRV_CONF_TLS_KEY, path.Join(keyserv.PkgInGopath, "keyserv", "rpc_test.key"))
 	sysconf.Set(keyserv.SRV_CONF_PASS_SALT, hex.EncodeToString(salt[:]))
 	sysconf.Set(keyserv.SRV_CONF_PASS_HASH, hex.EncodeToString(passHash[:]))
 	// To test email notification, simply start postfix at its default configuration
@@ -100,16 +100,17 @@ func TestEncryptDecrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		srv.ListenRPC()
-	}()
+	if err := srv.ListenRPC(); err != nil {
+		t.Fatal(err)
+	}
+	go srv.HandleConnections()
 	// Make an RPC client
 	time.Sleep(2 * time.Second)
-	certContent, err := ioutil.ReadFile(path.Join(keyserv.PkgInGopath, "keyrpc", "rpc_test.crt"))
+	certContent, err := ioutil.ReadFile(path.Join(keyserv.PkgInGopath, "keyserv", "rpc_test.crt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := keyserv.NewCryptClient("localhost", 3737, certContent)
+	client, err := keyserv.NewCryptClient("localhost", 3737, certContent, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,9 +313,10 @@ func TestEncryptDecrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		srv.ListenRPC()
-	}()
+	if err := srv.ListenRPC(); err != nil {
+		t.Fatal(err)
+	}
+	go srv.HandleConnections()
 
 	// There's no need to make a new RPC client because the client does not hold a persistent connection
 	if err := ManOnlineUnlockFS(os.Stdout, client, keyserv.TEST_RPC_PASS); err != nil {
@@ -401,9 +403,10 @@ func TestEncryptDecrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		srv.ListenRPC()
-	}()
+	if err := srv.ListenRPC(); err != nil {
+		t.Fatal(err)
+	}
+	go srv.HandleConnections()
 	// Check result from each unlock attempt
 	onlineUnlockErr := make([]error, 5)
 	for i := 0; i < 5; i++ {
@@ -421,7 +424,7 @@ func TestEncryptDecrypt(t *testing.T) {
 	checkSecret0()
 	checkSecret1()
 	// Alive messages should have been sent by ReportAlive
-	if msgs := srv.KeyDB.Records[loop0Dev.UUID].AliveMessages["127.0.0.1"]; len(msgs) == 0 {
+	if msgs := srv.KeyDB.RecordsByUUID[loop0Dev.UUID].AliveMessages["127.0.0.1"]; len(msgs) == 0 {
 		t.Fatal(msgs)
 	}
 	// Sending alive message to non-existing reports should result in immediate rejection
@@ -433,7 +436,7 @@ func TestEncryptDecrypt(t *testing.T) {
 		and their goroutines will end.
 	*/
 	srv.KeyDB.Lock.Lock()
-	id0Record := srv.KeyDB.Records[encUUID0]
+	id0Record := srv.KeyDB.RecordsByUUID[encUUID0]
 	id0Record.AliveMessages = map[string][]keydb.AliveMessage{
 		"NewHost1": []keydb.AliveMessage{
 			{
@@ -449,8 +452,8 @@ func TestEncryptDecrypt(t *testing.T) {
 				Timestamp: time.Now().Unix(),
 			},
 		}}
-	srv.KeyDB.Records[encUUID0] = id0Record
-	id1Record := srv.KeyDB.Records[encUUID1]
+	srv.KeyDB.RecordsByUUID[encUUID0] = id0Record
+	id1Record := srv.KeyDB.RecordsByUUID[encUUID1]
 	id1Record.AliveMessages = map[string][]keydb.AliveMessage{
 		"NewHost1": []keydb.AliveMessage{
 			{
@@ -466,7 +469,7 @@ func TestEncryptDecrypt(t *testing.T) {
 				Timestamp: time.Now().Unix(),
 			},
 		}}
-	srv.KeyDB.Records[encUUID1] = id1Record
+	srv.KeyDB.RecordsByUUID[encUUID1] = id1Record
 	srv.KeyDB.Lock.Unlock()
 	reportAliveMayEnd = true
 	fmt.Println("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
@@ -483,11 +486,11 @@ func TestEncryptDecrypt(t *testing.T) {
 	*/
 	resetDisks()
 	// Now that server has shut down, try to unlock disks using key records only.
-	if len(srv.KeyDB.Records) != 2 {
-		t.Fatal(srv.KeyDB.Records)
+	if len(srv.KeyDB.RecordsByUUID) != 2 {
+		t.Fatal(srv.KeyDB.RecordsByUUID)
 	}
 	records := make([]keydb.Record, 0, 0)
-	for _, record := range srv.KeyDB.Records {
+	for _, record := range srv.KeyDB.RecordsByUUID {
 		records = append(records, record)
 		fmt.Println("Offline-unlocking", record.MountPoint, record.UUID)
 		if err := UnlockFS(os.Stdout, record); err != nil {
@@ -529,8 +532,8 @@ func TestEncryptDecrypt(t *testing.T) {
 	if err := EraseKey(os.Stdout, client, keyserv.TEST_RPC_PASS, encUUID1); err != nil {
 		t.Fatal(err)
 	}
-	if len(srv.KeyDB.Records) != 0 {
-		t.Fatal(srv.KeyDB.Records)
+	if len(srv.KeyDB.RecordsByUUID) != 0 {
+		t.Fatal(srv.KeyDB.RecordsByUUID)
 	}
 	// Both file systems should now be crypto-closed
 	if _, err := fs.CryptStatus(loop0Crypt); err == nil {

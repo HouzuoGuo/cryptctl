@@ -21,13 +21,13 @@ const (
 )
 
 // Call cryptsetup luksFormat on the block device node.
-func CryptFormat(key []byte, blockDev string) error {
+func CryptFormat(key []byte, blockDev, uuid string) error {
 	if err := CheckBlockDevice(blockDev); err != nil {
 		return err
 	}
 	_, stdout, stderr, err := sys.Exec(bytes.NewReader(key), nil, nil,
 		BIN_CRYPTSETUP, "--batch-mode", "--cipher", LUKS_CIPHER, "--hash", LUKS_HASH, "--key-size", LUKS_KEY_SIZE_S,
-		"luksFormat", "--key-file=-", blockDev)
+		"luksFormat", "--key-file=-", blockDev, "--uuid="+uuid)
 	if err != nil {
 		return fmt.Errorf("CryptFormat: failed to format \"%s\" - %v %s %s", blockDev, err, stdout, stderr)
 	}
@@ -133,7 +133,7 @@ func CryptStatus(name string) (mapping CryptMapping, err error) {
 	_, stdout, _, _ := sys.Exec(nil, nil, nil, BIN_CRYPTSETUP, "status", name)
 	mapping = ParseCryptStatus(stdout)
 	if !mapping.IsValid() {
-		err = fmt.Errorf("CryptStatus: failed to retrieve a valid output for \"%s\"", name)
+		err = fmt.Errorf("CryptStatus: failed to retrieve a valid output for \"%s\", gathered information is: %+v", name, mapping)
 	}
 	return
 }

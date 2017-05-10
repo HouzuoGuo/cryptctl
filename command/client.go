@@ -24,6 +24,8 @@ const (
 	MSG_ASK_HOSTNAME        = "Key server's host name"
 	MSG_ASK_PORT            = "Key server's port number"
 	MSG_ASK_CA              = "(Optional) PEM-encoded CA certificate of key server"
+	MSG_ASK_CLIENT_CERT     = "If key server will validate client identity, enter path to PEM-encoded client certificate"
+	MSG_ASK_CLIENT_CERT_KEY = "If key server will validate client identity, enter path to PEM-encoded client key"
 	MSG_ASK_DIFF_HOST       = `Previously, this computer used "%s" as its key server; now you wish to use "%s".
 Only a single key server can be used to unlock all encrypted disks on this computer.
 Do you wish to proceed and switch to the new key server?`
@@ -59,7 +61,7 @@ The encryption sequence will carry out the following tasks:
 )
 
 // Prompt user to enter key server's CA file, host name, and port. Defaults are provided by existing configuration.
-func PromptForKeyServer() (sysconf *sys.Sysconfig, caFile, host string, port int, err error) {
+func PromptForKeyServer() (sysconf *sys.Sysconfig, caFile, certFile, certKeyFile, host string, port int, err error) {
 	sysconf, err = sys.ParseSysconfigFile(CLIENT_CONFIG_PATH, true)
 	if err != nil {
 		return
@@ -76,6 +78,16 @@ func PromptForKeyServer() (sysconf *sys.Sysconfig, caFile, host string, port int
 	if caFile = sys.InputAbsFilePath(false, defaultCAFile, MSG_ASK_CA); caFile == "" {
 		caFile = defaultCAFile
 	}
+	defaultCertFile := sysconf.GetString(keyserv.CLIENT_CONF_CERT, "")
+	if certFile = sys.InputAbsFilePath(false, defaultCertFile, MSG_ASK_CLIENT_CERT); certFile == "" {
+		certFile = defaultCertFile
+	}
+	if certFile != "" {
+		defaultCertKeyFile := sysconf.GetString(keyserv.CLIENT_CONF_CERT_KEY, "")
+		if certKeyFile = sys.InputAbsFilePath(false, defaultCertKeyFile, MSG_ASK_CLIENT_CERT_KEY); certKeyFile == "" {
+			certKeyFile = defaultCertKeyFile
+		}
+	}
 	return
 }
 
@@ -84,7 +96,7 @@ func EncryptFS() error {
 	sys.LockMem()
 
 	// Prompt for connection details
-	sysconf, caFile, host, port, err := PromptForKeyServer()
+	sysconf, caFile, certFile, certKeyFile, host, port, err := PromptForKeyServer()
 	if err != nil {
 		return err
 	}
@@ -96,7 +108,7 @@ func EncryptFS() error {
 	}
 
 	// Check server connectivity before commencing encryption
-	client, password, err := ConnectToKeyServer(caFile, fmt.Sprintf("%s:%d", host, port))
+	client, password, err := ConnectToKeyServer(caFile, certFile, certKeyFile, fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		return err
 	}
@@ -140,6 +152,8 @@ func EncryptFS() error {
 	sysconf.Set(keyserv.CLIENT_CONF_HOST, host)
 	sysconf.Set(keyserv.CLIENT_CONF_PORT, strconv.Itoa(port))
 	sysconf.Set(keyserv.CLIENT_CONF_CA, caFile)
+	sysconf.Set(keyserv.CLIENT_CONF_CERT, certFile)
+	sysconf.Set(keyserv.CLIENT_CONF_CERT_KEY, certKeyFile)
 	if err := ioutil.WriteFile(CLIENT_CONFIG_PATH, []byte(sysconf.ToText()), 0600); err != nil {
 		return fmt.Errorf(MSG_E_SAVE_SYSCONF, CLIENT_CONFIG_PATH, err)
 	}
@@ -151,11 +165,11 @@ func EncryptFS() error {
 // Sub-command: forcibly unlock all file systems that have their keys on a key server.
 func ManOnlineUnlockFS() error {
 	sys.LockMem()
-	_, caFile, host, port, err := PromptForKeyServer()
+	_, caFile, certFile, certKeyFile, host, port, err := PromptForKeyServer()
 	if err != nil {
 		return err
 	}
-	client, password, err := ConnectToKeyServer(caFile, fmt.Sprintf("%s:%d", host, port))
+	client, password, err := ConnectToKeyServer(caFile, certFile, certKeyFile, fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		return err
 	}
@@ -228,7 +242,11 @@ func EraseKey() error {
 		return errors.New(MSG_E_ERASE_NO_CONF)
 	}
 	caFile := sysconf.GetString(keyserv.CLIENT_CONF_CA, "")
-	client, password, err := ConnectToKeyServer(caFile, fmt.Sprintf("%s:%d", host, port))
+	client, password, err := ConnectToKeyServer(
+		caFile,
+		sysconf.GetString(keyserv.CLIENT_CONF_CERT, ""),
+		sysconf.GetString(keyserv.CLIENT_CONF_CERT_KEY, ""),
+		fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		return err
 	}

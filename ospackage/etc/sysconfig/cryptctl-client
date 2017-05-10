@@ -20,3 +20,15 @@ KEY_SERVER_PORT=3737
 # (Optional) path to PEM-encoded custom certificate authority that issued the TLS certificate for the key server.
 # Leave empty if the TLS certificate was issued by a well-known certificate authority.
 TLS_CA_PEM=""
+
+## Type:    string
+## Default: ""
+#
+# (Optional) Location of PEM-encoded TLS certificate file to identify the client to server.
+TLS_CERT_PEM=""
+
+## Type:    string
+## Default: ""
+#
+# (Optional) Location of PEM-encoded TLS certificate key file to identify the client to server.
+TLS_CERT_KEY_PEM=""

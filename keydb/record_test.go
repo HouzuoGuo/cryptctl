@@ -325,6 +325,7 @@ func TestRecordAliveMessage2(t *testing.T) {
 func TestRecord(t *testing.T) {
 	rec := Record{
 		UUID:         "testuuid",
+		ID:           "testid",
 		Key:          []byte{0, 1, 2, 3},
 		MountPoint:   "/tmp/a",
 		MountOptions: []string{"rw", "noatime"},
@@ -366,7 +367,7 @@ func TestRecord(t *testing.T) {
 	}
 
 	// Format as string
-	if s := rec.FormatAttrs("|"); s != `Timestamp="123456"|IP="ip1"|Hostname="host1"|FileSystemUUID="testuuid"|MountPoint="/tmp/a"|MountOptions="rw,noatime"` {
+	if s := rec.FormatAttrs("|"); s != `Timestamp="123456"|IP="ip1"|Hostname="host1"|FileSystemUUID="testuuid"|KMIPID="testid"|MountPoint="/tmp/a"|MountOptions="rw,noatime"` {
 		t.Fatal(s)
 	}
 }

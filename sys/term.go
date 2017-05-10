@@ -77,7 +77,7 @@ func InputInt(mandatory bool, defaultHint, lowerLimit, upperLimit int, format st
 	for {
 		valStr := Input(mandatory, strconv.Itoa(defaultHint), format, values...)
 		if valStr == "" {
-			return 0
+			return defaultHint
 		}
 		valInt, err := strconv.Atoi(valStr)
 		if err != nil {

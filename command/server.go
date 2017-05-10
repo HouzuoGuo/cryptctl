@@ -29,7 +29,7 @@ const (
 )
 
 // Interactively read server password from terminal, then use the password to ping RPC server.
-func ConnectToKeyServer(caFile, keyServer string) (client *keyserv.CryptClient, password string, err error) {
+func ConnectToKeyServer(caFile, certFile, keyFile, keyServer string) (client *keyserv.CryptClient, password string, err error) {
 	sys.LockMem()
 	serverAddr := keyServer
 	port := keyserv.SRV_DEFAULT_PORT
@@ -52,13 +52,17 @@ func ConnectToKeyServer(caFile, keyServer string) (client *keyserv.CryptClient, 
 		customCA = caFileContent
 	}
 	// Initialise client and test connectivity with the server
-	client, err = keyserv.NewCryptClient(serverAddr, port, customCA)
+	client, err = keyserv.NewCryptClient(serverAddr, port, customCA, certFile, keyFile)
 	if err != nil {
 		return nil, "", err
 	}
 	password = sys.InputPassword(true, "", "Enter key server's password (no echo)")
 	fmt.Fprintf(os.Stderr, "Establishing connection to %s on port %d...\n", serverAddr, port)
-	if err := client.Ping(keyserv.PingRequest{Password: password}); err != nil {
+	salt, err := client.GetSalt()
+	if err != nil {
+		return nil, "", err
+	}
+	if err := client.Ping(keyserv.PingRequest{Password: keyserv.HashPassword(salt, password)}); err != nil {
 		return nil, "", err
 	}
 	return
@@ -229,6 +233,23 @@ Important notes for client computers:
 		"Key database directory"); keyDBDir != "" {
 		sysconf.Set(keyserv.SRV_CONF_KEYDB_DIR, keyDBDir)
 	}
+	// Walk through client certificate verification settings
+	validateClient := sys.InputBool("Should clients present their certificate in order to access this server?")
+	sysconf.Set(keyserv.SRV_CONF_TLS_VALIDATE_CLIENT, validateClient)
+	if validateClient {
+		sysconf.Set(keyserv.SRV_CONF_TLS_CA, sys.Input(true, "", "PEM-encoded TLS certificate authority that will issue client certificates"))
+	}
+	// Walk through KMIP settings
+	useExternalKMIPServer := sys.InputBool("Should encryption keys be kept on a KMIP-compatible key management appliance?")
+	if useExternalKMIPServer {
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_HOST, sys.Input(true, "", "KMIP server host name"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_PORT, sys.InputInt(true, 5696, 1, 65535, "KMIP port number"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_USER, sys.Input(false, "", "KMIP username"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_PASS, sys.Input(false, "", "KMIP password"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_CA, sys.Input(false, "", "PEM-encoded TLS certificate authority that issued KMIP server certificate"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_CERT, sys.Input(false, "", "PEM-encoded TLS client identitiy certificate"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_KEY, sys.Input(false, "", "PEM-encoded TLS client identitiy certificate key"))
+	}
 	// Walk through optional email settings
 	fmt.Println("\nTo enable Email notifications, enter the following parameters:")
 	if mta := sys.Input(false,
@@ -339,6 +360,7 @@ func KeyRPCDaemon() error {
 	if err := srv.ListenRPC(); err != nil {
 		return fmt.Errorf("Failed to listen for connections: %v", err)
 	}
+	srv.HandleConnections() // intentionally block here
 	return nil
 }
 
@@ -351,12 +373,13 @@ func ListKeys() error {
 	recList := db.List()
 	fmt.Printf("Total: %d records (date and time are in zone %s)\n", len(recList), time.Now().Format("MST"))
 	// Print mount point last, making output possible to be parsed by a program
-	// Max field length: 15 (IP), 19 (IP When), 36 (UUID), 9 (Max Active), 9 (Current Active) last field (mount point)
-	fmt.Println("Used By         When                UUID                                 Max.Users Num.Users Mount Point")
+	// Max field length: 15 (IP), 19 (IP When), 12(ID), 36 (UUID), 9 (Max Active), 9 (Current Active) last field (mount point)
+	fmt.Println("Used By         When                ID           UUID                                 Max.Users Num.Users Mount Point")
 	for _, rec := range recList {
 		outputTime := time.Unix(rec.LastRetrieval.Timestamp, 0).Format(TIME_OUTPUT_FORMAT)
 		rec.RemoveDeadHosts()
-		fmt.Printf("%-15s %-19s %-36s %-9s %-9s %s\n", rec.LastRetrieval.IP, outputTime, rec.UUID,
+		fmt.Printf("%-15s %-19s %-12s %-36s %-9s %-9s %s\n", rec.LastRetrieval.IP, outputTime,
+			rec.ID, rec.UUID,
 			strconv.Itoa(rec.MaxActive), strconv.Itoa(len(rec.AliveMessages)), rec.MountPoint)
 	}
 	return nil
@@ -391,7 +414,7 @@ func EditKey(uuid string) error {
 		rec.AliveCount = roundedAliveTimeout / routine.REPORT_ALIVE_INTERVAL_SEC
 	}
 	// Write record file and restart server to let it reload all records into memory
-	if err := db.Upsert(rec); err != nil {
+	if _, err := db.Upsert(rec); err != nil {
 		return fmt.Errorf("Failed to update record - %v", err)
 	}
 	fmt.Println("Record has been updated successfully.")

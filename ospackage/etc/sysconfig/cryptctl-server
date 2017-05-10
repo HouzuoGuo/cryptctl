@@ -19,6 +19,13 @@ AUTH_PASSWORD_SALT=""
 ## Type:    string
 ## Default: ""
 #
+# (Optional) path to PEM-encoded custom certificate authority that issued the TLS certificate for the key server.
+# Leave empty if the TLS certificate was issued by a well-known certificate authority.
+TLS_CA_PEM=""
+
+## Type:    string
+## Default: ""
+#
 # Location of PEM-encoded TLS certificate file, this is mandatory.
 TLS_CERT_PEM=""
 
@@ -27,6 +34,12 @@ TLS_CERT_PEM=""
 #
 # Location of PEM-encoded TLS certificate key file that corresponds to the certificate, this is mandatory.
 TLS_CERT_KEY_PEM=""
+
+## Type:    string
+## Default: "no"
+#
+# Whether the server will validate client's certificate before accepting its request.
+TLS_VALIDATE_CLIENT="no"
 
 ## Type:    string
 ## Default: "0.0.0.0"
@@ -95,23 +108,42 @@ EMAIL_KEY_RETRIEVAL_GREETING="The key server has given out the following encrypt
 ## Type:    string
 ## Default: ""
 #
-# Host name or IP of KMIP server, if the key server should act as an KMIP client.
+# If key server should act as KMIP proxy, this is the KMIP host name.
 KMIP_SERVER_HOST=""
 
 ## Type:    integer
 ## Default: ""
 #
-# Port number of KMIP service, if the key server should act as an KMIP client.
+# If key server should act as KMIP proxy, this is the KMIP service port.
 KMIP_SERVER_PORT=""
 
 ## Type:    string
 ## Default: ""
 #
-# User name for KMIP access, if the key server should act as an KMIP client.
+# If key server should act as KMIP proxy, this is the KMIP access user name.
 KMIP_SERVER_USER=""
 
 ## Type:    string
 ## Default: ""
 #
-# Password for KMIP access, if the key server should act as an KMIP client.
+# If key server should act as KMIP proxy, this is the KMIP access password.
 KMIP_SERVER_PASS=""
+
+## Type:    string
+## Default: ""
+#
+# If key server should act as KMIP proxy, this is the KMIP server CA certificate.
+KMIP_CA_PEM=""
+
+## Type:    string
+## Default: ""
+#
+# If key server should act as KMIP proxy, this is the KMIP client certificate.
+KMIP_TLS_CERT_PEM=""
+
+## Type:    string
+## Default: ""
+#
+# If key server should act as KMIP proxy, this is the KMIP client certificate key.
+KMIP_TLS_CERT_KEY_PEM=""
+

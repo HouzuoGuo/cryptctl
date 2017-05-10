@@ -50,17 +50,17 @@ func TestRecordCRUD(t *testing.T) {
 	rec2Alive := rec2
 	rec2Alive.LastRetrieval = aliveMsg
 	rec2Alive.AliveMessages = map[string][]AliveMessage{aliveMsg.IP: []AliveMessage{aliveMsg}}
-	if seq, err := db.Upsert(rec1); err != nil || seq != 1 {
+	if seq, err := db.Upsert(rec1); err != nil || seq != "1" {
 		t.Fatal(err, seq)
 	}
-	if seq, err := db.Upsert(rec2); err != nil || seq != 2 {
+	if seq, err := db.Upsert(rec2); err != nil || seq != "2" {
 		t.Fatal(err, seq)
 	}
 	// Match sequence number in my copy of records with their should-be ones
-	rec1.SequenceNum = 1
-	rec1Alive.SequenceNum = 1
-	rec2.SequenceNum = 2
-	rec2Alive.SequenceNum = 2
+	rec1.ID = "1"
+	rec1Alive.ID = "1"
+	rec2.ID = "2"
+	rec2Alive.ID = "2"
 	// Select one record and then select both records
 	if found, rejected, missing := db.Select(aliveMsg, true, "1", "doesnotexist"); !reflect.DeepEqual(found, map[string]Record{rec1.UUID: rec1Alive}) ||
 		!reflect.DeepEqual(rejected, []string{}) ||
@@ -89,7 +89,7 @@ func TestRecordCRUD(t *testing.T) {
 	if len(db.RecordsByUUID["1"].AliveMessages["ip1"]) != 2 || len(db.RecordsByUUID["2"].AliveMessages["ip1"]) != 2 {
 		t.Fatal(db.RecordsByUUID)
 	}
-	if len(db.RecordsByID[1].AliveMessages["ip1"]) != 2 || len(db.RecordsByID[2].AliveMessages["ip1"]) != 2 {
+	if len(db.RecordsByID["1"].AliveMessages["ip1"]) != 2 || len(db.RecordsByID["2"].AliveMessages["ip1"]) != 2 {
 		t.Fatal(db.RecordsByUUID)
 	}
 	// Erase a record
@@ -135,7 +135,7 @@ func TestOpenDBOneRecord(t *testing.T) {
 		},
 		AliveMessages: make(map[string][]AliveMessage),
 	}
-	if seq, err := db.Upsert(rec); err != nil || seq != 1 {
+	if seq, err := db.Upsert(rec); err != nil || seq != "1" {
 		t.Fatal(err)
 	}
 	dbOneRecord, err := OpenDBOneRecord(TEST_DIR, "a")
@@ -145,17 +145,17 @@ func TestOpenDBOneRecord(t *testing.T) {
 	if len(dbOneRecord.RecordsByUUID) != 1 {
 		t.Fatal(dbOneRecord.RecordsByUUID)
 	}
-	rec.SequenceNum = 1
+	rec.ID = "1"
 	if recA, found := dbOneRecord.GetByUUID("a"); !found || !reflect.DeepEqual(recA, rec) {
 		t.Fatal(recA, found)
 	}
-	if recA, found := dbOneRecord.GetByID(1); !found || !reflect.DeepEqual(recA, rec) {
+	if recA, found := dbOneRecord.GetByID("1"); !found || !reflect.DeepEqual(recA, rec) {
 		t.Fatal(recA, found)
 	}
 	if _, found := dbOneRecord.GetByUUID("doesnotexist"); found {
 		t.Fatal("false positive")
 	}
-	if _, found := dbOneRecord.GetByID(78598123); found {
+	if _, found := dbOneRecord.GetByID("78598123"); found {
 		t.Fatal("false positive")
 	}
 }
@@ -209,18 +209,18 @@ func TestList(t *testing.T) {
 	}
 	rec3NoKey := rec3
 	rec3NoKey.Key = nil
-	if seq, err := db.Upsert(rec1); err != nil || seq != 1 {
+	if seq, err := db.Upsert(rec1); err != nil || seq != "1" {
 		t.Fatal(err, seq)
 	}
-	if seq, err := db.Upsert(rec2); err != nil || seq != 2 {
+	if seq, err := db.Upsert(rec2); err != nil || seq != "2" {
 		t.Fatal(err)
 	}
-	if seq, err := db.Upsert(rec3); err != nil || seq != 3 {
+	if seq, err := db.Upsert(rec3); err != nil || seq != "3" {
 		t.Fatal(err)
 	}
-	rec1NoKey.SequenceNum = 1
-	rec2NoKey.SequenceNum = 2
-	rec3NoKey.SequenceNum = 3
+	rec1NoKey.ID = "1"
+	rec2NoKey.ID = "2"
+	rec3NoKey.ID = "3"
 	recs := db.List()
 	if !reflect.DeepEqual(recs[0], rec1NoKey) ||
 		!reflect.DeepEqual(recs[1], rec3NoKey) ||

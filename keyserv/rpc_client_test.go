@@ -3,23 +3,49 @@
 package keyserv
 
 import (
+	"fmt"
 	"github.com/HouzuoGuo/cryptctl/keydb"
 	"github.com/HouzuoGuo/cryptctl/sys"
 	"path"
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
 
+func TestCreateKeyReq_Validate(t *testing.T) {
+	req := CreateKeyReq{}
+	if err := req.Validate(); err == nil || !strings.Contains(err.Error(), "UUID must not be empty") {
+		t.Fatal(err)
+	}
+	req.UUID = "/root/../a-"
+	if err := req.Validate(); err == nil || !strings.Contains(err.Error(), "Illegal chara") {
+		t.Fatal(err)
+	}
+	req.UUID = "abc-def-123-ghi"
+	if err := req.Validate(); err == nil || !strings.Contains(err.Error(), "Mount point") {
+		t.Fatal(err)
+	}
+	req.MountPoint = "/a"
+	if err := req.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRPCCalls(t *testing.T) {
 	client, tearDown := StartTestServer(t)
 	defer tearDown(t)
-	if err := client.Ping(PingRequest{Password: "wrong pass"}); err == nil {
+	// Retrieve server's password salt
+	salt, err := client.GetSalt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Ping(PingRequest{Password: HashPassword(salt, "wrong password")}); err == nil {
 		t.Fatal("did not error")
 	}
-	if err := client.Ping(PingRequest{Password: TEST_RPC_PASS}); err != nil {
+	if err := client.Ping(PingRequest{Password: HashPassword(salt, TEST_RPC_PASS)}); err != nil {
 		t.Fatal(err)
 	}
 	// Construct a client via sysconfig
@@ -31,55 +57,66 @@ func TestRPCCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := scClient.Ping(PingRequest{Password: TEST_RPC_PASS}); err != nil {
+	if err := scClient.Ping(PingRequest{Password: HashPassword(salt, TEST_RPC_PASS)}); err != nil {
 		t.Fatal(err)
 	}
-	// Save a bogus key will result in error
-	err = client.SaveKey(SaveKeyReq{Password: TEST_RPC_PASS, Hostname: "localhost", Record: keydb.Record{}})
-	if err == nil {
-		t.Fatal(err)
-	}
-	// Save two keys
-	keyRec1 := keydb.Record{
+	// Refuse to save a key if password is incorrect
+	createResp, err := client.CreateKey(CreateKeyReq{
+		Password:         HashPassword(salt, "wrong password"),
+		Hostname:         "localhost",
 		UUID:             "aaa",
-		Key:              []byte{0, 1, 2, 3},
 		MountPoint:       "/a",
 		MountOptions:     []string{"ro", "noatime"},
 		MaxActive:        1,
 		AliveIntervalSec: 1,
 		AliveCount:       4,
+	})
+	if err == nil {
+		t.Fatal("did not error")
 	}
-	keyRec2 := keydb.Record{
+	// Save two good keys
+	createResp, err = client.CreateKey(CreateKeyReq{
+		Password:         HashPassword(salt, TEST_RPC_PASS),
+		Hostname:         "localhost",
+		UUID:             "aaa",
+		MountPoint:       "/a",
+		MountOptions:     []string{"ro", "noatime"},
+		MaxActive:        1,
+		AliveIntervalSec: 1,
+		AliveCount:       4,
+	})
+	if err != nil || len(createResp.KeyContent) != KMIPAESKeySizeBits/8 {
+		t.Fatal(err)
+	}
+	createResp, err = client.CreateKey(CreateKeyReq{
+		Password:         HashPassword(salt, TEST_RPC_PASS),
+		Hostname:         "localhost",
 		UUID:             "bbb",
-		Key:              []byte{0, 1, 2, 3},
 		MountPoint:       "/b",
 		MountOptions:     []string{"ro", "noatime"},
 		MaxActive:        0,
 		AliveIntervalSec: 1,
 		AliveCount:       4,
-	}
-	if err := client.SaveKey(SaveKeyReq{Password: "wrong pass", Hostname: "localhost", Record: keyRec1}); err == nil {
-		t.Fatal("did not error")
-	}
-	if err := client.SaveKey(SaveKeyReq{Password: TEST_RPC_PASS, Hostname: "localhost", Record: keyRec1}); err != nil {
+	})
+	if err != nil || len(createResp.KeyContent) != KMIPAESKeySizeBits/8 {
 		t.Fatal(err)
 	}
-	if err := client.SaveKey(SaveKeyReq{Password: TEST_RPC_PASS, Hostname: "localhost", Record: keyRec2}); err != nil {
-		t.Fatal(err)
-	}
-	// Retrieve both keys without password
-	resp, err := client.AutoRetrieveKey(AutoRetrieveKeyReq{
+	// Retrieve both keys via automated retrieval without password
+	autoRetrieveResp, err := client.AutoRetrieveKey(AutoRetrieveKeyReq{
 		UUIDs:    []string{"aaa", "bbb", "does_not_exist"},
 		Hostname: "localhost",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Granted) != 2 || len(resp.Rejected) != 0 || !reflect.DeepEqual(resp.Missing, []string{"does_not_exist"}) {
-		t.Fatal(resp.Granted, resp.Rejected, resp.Missing)
+	if len(autoRetrieveResp.Granted) != 2 || len(autoRetrieveResp.Rejected) != 0 || !reflect.DeepEqual(autoRetrieveResp.Missing, []string{"does_not_exist"}) {
+		t.Fatal(autoRetrieveResp.Granted, autoRetrieveResp.Rejected, autoRetrieveResp.Missing)
+	}
+	if len(autoRetrieveResp.Granted["aaa"].Key) != KMIPAESKeySizeBits/8 || len(autoRetrieveResp.Granted["bbb"].Key) != KMIPAESKeySizeBits/8 {
+		t.Fatal(autoRetrieveResp.Granted)
 	}
 	verifyKeyA := func(recA keydb.Record) {
-		if recA.UUID != "aaa" || !reflect.DeepEqual(recA.Key, []byte{0, 1, 2, 3}) || recA.MountPoint != "/a" ||
+		if recA.UUID != "aaa" || recA.MountPoint != "/a" ||
 			!reflect.DeepEqual(recA.MountOptions, []string{"ro", "noatime"}) || recA.AliveIntervalSec != 1 || recA.AliveCount != 4 ||
 			recA.LastRetrieval.Timestamp == 0 || recA.LastRetrieval.Hostname != "localhost" || recA.LastRetrieval.IP != "127.0.0.1" ||
 			len(recA.AliveMessages["127.0.0.1"]) != 1 {
@@ -87,41 +124,39 @@ func TestRPCCalls(t *testing.T) {
 		}
 	}
 	verifyKeyB := func(recB keydb.Record) {
-		if recB.UUID != "bbb" || !reflect.DeepEqual(recB.Key, []byte{0, 1, 2, 3}) || recB.MountPoint != "/b" ||
+		if recB.UUID != "bbb" || recB.MountPoint != "/b" ||
 			!reflect.DeepEqual(recB.MountOptions, []string{"ro", "noatime"}) || recB.AliveIntervalSec != 1 || recB.AliveCount != 4 ||
 			recB.LastRetrieval.Timestamp == 0 || recB.LastRetrieval.Hostname != "localhost" || recB.LastRetrieval.IP != "127.0.0.1" ||
 			len(recB.AliveMessages) != 1 || len(recB.AliveMessages["127.0.0.1"]) != 1 {
 			t.Fatal(recB)
 		}
 	}
-	// Verify retrieved keys
-	verifyKeyA(resp.Granted["aaa"])
-	verifyKeyB(resp.Granted["bbb"])
+	verifyKeyA(autoRetrieveResp.Granted["aaa"])
+	verifyKeyB(autoRetrieveResp.Granted["bbb"])
 
-	// Retrieve a key for a second time should be checked against MaxActive allowrance
-	resp, err = client.AutoRetrieveKey(AutoRetrieveKeyReq{
+	// Retrieve a key for a second time should be checked against MaxActive limit
+	autoRetrieveResp, err = client.AutoRetrieveKey(AutoRetrieveKeyReq{
 		UUIDs:    []string{"aaa", "bbb", "does_not_exist"},
 		Hostname: "localhost",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Granted) != 1 || !reflect.DeepEqual(resp.Rejected, []string{"aaa"}) || !reflect.DeepEqual(resp.Missing, []string{"does_not_exist"}) {
-		t.Fatal(resp.Granted, resp.Rejected, resp.Missing)
+	if len(autoRetrieveResp.Granted) != 1 || !reflect.DeepEqual(autoRetrieveResp.Rejected, []string{"aaa"}) || !reflect.DeepEqual(autoRetrieveResp.Missing, []string{"does_not_exist"}) {
+		t.Fatal(autoRetrieveResp.Granted, autoRetrieveResp.Rejected, autoRetrieveResp.Missing)
 	}
-	// Verify retrieved key bbb
-	verifyKeyB(resp.Granted["bbb"])
+	verifyKeyB(autoRetrieveResp.Granted["bbb"])
 
 	// Forcibly retrieve both keys and verify
 	if _, err := client.ManualRetrieveKey(ManualRetrieveKeyReq{
-		Password: "wrong password",
+		Password: HashPassword(salt, "wrong password"),
 		UUIDs:    []string{"aaa"},
 		Hostname: "localhost",
 	}); err == nil {
 		t.Fatal("did not error")
 	}
 	manResp, err := client.ManualRetrieveKey(ManualRetrieveKeyReq{
-		Password: TEST_RPC_PASS,
+		Password: HashPassword(salt, TEST_RPC_PASS),
 		UUIDs:    []string{"aaa", "bbb", "does_not_exist"},
 		Hostname: "localhost",
 	})
@@ -152,38 +187,44 @@ func TestRPCCalls(t *testing.T) {
 
 	// Delete key
 	if err := client.EraseKey(EraseKeyReq{
-		Password: "wrongpass",
+		Password: HashPassword(salt, "wrong password"),
 		Hostname: "localhost",
 		UUID:     "aaa",
 	}); err == nil {
 		t.Fatal("did not error")
 	}
 	if err := client.EraseKey(EraseKeyReq{
-		Password: TEST_RPC_PASS,
+		Password: HashPassword(salt, TEST_RPC_PASS),
 		Hostname: "localhost",
 		UUID:     "doesnotexist",
 	}); err == nil {
 		t.Fatal("did not error")
 	}
 	if err := client.EraseKey(EraseKeyReq{
-		Password: TEST_RPC_PASS,
+		Password: HashPassword(salt, TEST_RPC_PASS),
 		Hostname: "localhost",
 		UUID:     "aaa",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.EraseKey(EraseKeyReq{
-		Password: TEST_RPC_PASS,
+		Password: HashPassword(salt, TEST_RPC_PASS),
 		Hostname: "localhost",
 		UUID:     "aaa",
 	}); err == nil {
 		t.Fatal("did not error")
 	}
+	fmt.Println("About to run teardown")
 }
 
 func BenchmarkSaveKey(b *testing.B) {
 	client, tearDown := StartTestServer(b)
 	defer tearDown(b)
+	// Retrieve server's password salt
+	salt, err := client.GetSalt()
+	if err != nil {
+		b.Fatal(err)
+	}
 	// Run all transactions in a single goroutine
 	oldMaxprocs := runtime.GOMAXPROCS(-1)
 	defer runtime.GOMAXPROCS(oldMaxprocs)
@@ -191,19 +232,15 @@ func BenchmarkSaveKey(b *testing.B) {
 	b.ResetTimer()
 	// The benchmark will run all RPC operations consecutively
 	for i := 0; i < b.N; i++ {
-		rec := keydb.Record{
+		if _, err := client.CreateKey(CreateKeyReq{
+			Password:         HashPassword(salt, TEST_RPC_PASS),
+			Hostname:         "localhost",
 			UUID:             "aaa",
-			Key:              []byte{0, 1, 2, 3},
 			MountPoint:       "/a",
 			MountOptions:     []string{"ro", "noatime"},
 			MaxActive:        -1,
 			AliveIntervalSec: 1,
 			AliveCount:       4,
-		}
-		if err := client.SaveKey(SaveKeyReq{
-			Password: TEST_RPC_PASS,
-			Hostname: "localhost",
-			Record:   rec,
 		}); err != nil {
 			b.Fatal(err)
 		}
@@ -214,23 +251,24 @@ func BenchmarkSaveKey(b *testing.B) {
 func BenchmarkAutoRetrieveKey(b *testing.B) {
 	client, tearDown := StartTestServer(b)
 	defer tearDown(b)
+	// Retrieve server's password salt
+	salt, err := client.GetSalt()
+	if err != nil {
+		b.Fatal(err)
+	}
 	// Run all transactions in a single goroutine
 	oldMaxprocs := runtime.GOMAXPROCS(-1)
 	defer runtime.GOMAXPROCS(oldMaxprocs)
 	runtime.GOMAXPROCS(1)
-	rec := keydb.Record{
+	if _, err := client.CreateKey(CreateKeyReq{
+		Password:         HashPassword(salt, TEST_RPC_PASS),
+		Hostname:         "localhost",
 		UUID:             "aaa",
-		Key:              []byte{0, 1, 2, 3},
 		MountPoint:       "/a",
 		MountOptions:     []string{"ro", "noatime"},
 		MaxActive:        -1,
 		AliveIntervalSec: 1,
 		AliveCount:       4,
-	}
-	if err := client.SaveKey(SaveKeyReq{
-		Password: TEST_RPC_PASS,
-		Hostname: "localhost",
-		Record:   rec,
 	}); err != nil {
 		b.Fatal(err)
 	}
@@ -250,23 +288,24 @@ func BenchmarkAutoRetrieveKey(b *testing.B) {
 func BenchmarkManualRetrieveKey(b *testing.B) {
 	client, tearDown := StartTestServer(b)
 	defer tearDown(b)
+	// Retrieve server's password salt
+	salt, err := client.GetSalt()
+	if err != nil {
+		b.Fatal(err)
+	}
 	// Run all transactions in a single goroutine
 	oldMaxprocs := runtime.GOMAXPROCS(-1)
 	defer runtime.GOMAXPROCS(oldMaxprocs)
 	runtime.GOMAXPROCS(1)
-	rec := keydb.Record{
+	if _, err := client.CreateKey(CreateKeyReq{
+		Password:         HashPassword(salt, TEST_RPC_PASS),
+		Hostname:         "localhost",
 		UUID:             "aaa",
-		Key:              []byte{0, 1, 2, 3},
 		MountPoint:       "/a",
 		MountOptions:     []string{"ro", "noatime"},
 		MaxActive:        -1,
 		AliveIntervalSec: 1,
 		AliveCount:       4,
-	}
-	if err := client.SaveKey(SaveKeyReq{
-		Password: TEST_RPC_PASS,
-		Hostname: "localhost",
-		Record:   rec,
 	}); err != nil {
 		b.Fatal(err)
 	}
@@ -274,7 +313,7 @@ func BenchmarkManualRetrieveKey(b *testing.B) {
 	// The benchmark will run all RPC operations consecutively
 	for i := 0; i < b.N; i++ {
 		if resp, err := client.ManualRetrieveKey(ManualRetrieveKeyReq{
-			Password: TEST_RPC_PASS,
+			Password: HashPassword(salt, TEST_RPC_PASS),
 			UUIDs:    []string{"aaa"},
 			Hostname: "localhost",
 		}); err != nil || len(resp.Granted) != 1 {
@@ -287,29 +326,30 @@ func BenchmarkManualRetrieveKey(b *testing.B) {
 func BenchmarkReportAlive(b *testing.B) {
 	client, tearDown := StartTestServer(b)
 	defer tearDown(b)
+	// Retrieve server's password salt
+	salt, err := client.GetSalt()
+	if err != nil {
+		b.Fatal(err)
+	}
 	// Run all benchmark operations in a single goroutine to know the real performance
 	oldMaxprocs := runtime.GOMAXPROCS(-1)
 	defer runtime.GOMAXPROCS(oldMaxprocs)
 	runtime.GOMAXPROCS(1)
-	rec := keydb.Record{
+	if _, err := client.CreateKey(CreateKeyReq{
+		Password:         HashPassword(salt, TEST_RPC_PASS),
+		Hostname:         "localhost",
 		UUID:             "aaa",
-		Key:              []byte{0, 1, 2, 3},
 		MountPoint:       "/a",
 		MountOptions:     []string{"ro", "noatime"},
 		MaxActive:        -1,
 		AliveIntervalSec: 1,
 		AliveCount:       4,
-	}
-	if err := client.SaveKey(SaveKeyReq{
-		Password: TEST_RPC_PASS,
-		Hostname: "localhost",
-		Record:   rec,
 	}); err != nil {
 		b.Fatal(err)
 	}
 	// Retrieve the key so that this computer becomes eligible to send alive messages
 	if resp, err := client.ManualRetrieveKey(ManualRetrieveKeyReq{
-		Password: TEST_RPC_PASS,
+		Password: HashPassword(salt, TEST_RPC_PASS),
 		UUIDs:    []string{"aaa"},
 		Hostname: "localhost",
 	}); err != nil || len(resp.Granted) != 1 {

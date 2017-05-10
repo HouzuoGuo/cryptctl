@@ -23,12 +23,16 @@ const (
 	CLIENT_CONF_HOST     = "KEY_SERVER_HOST"
 	CLIENT_CONF_PORT     = "KEY_SERVER_PORT"
 	CLIENT_CONF_CA       = "TLS_CA_PEM"
+	CLIENT_CONF_CERT     = "TLS_CERT_PEM"
+	CLIENT_CONF_CERT_KEY = "TLS_CERT_KEY_PEM"
 	TEST_RPC_PASS        = "pass"
 )
 
 type CryptClient struct {
 	ServerHost string
 	ServerPort int
+	TLSCert    string
+	TLSKey     string
 	TLSConfig  *tls.Config
 }
 
@@ -36,13 +40,13 @@ type CryptClient struct {
 Initialise an RPC client.
 The function does not immediately establish a connection to server, connection is only made along with each RPC call.
 */
-func NewCryptClient(host string, port int, caCertPEM []byte) (*CryptClient, error) {
+func NewCryptClient(host string, port int, caCertPEM []byte, certPath, certKeyPath string) (*CryptClient, error) {
 	client := &CryptClient{
 		ServerHost: host,
 		ServerPort: port,
 		TLSConfig:  new(tls.Config),
 	}
-	if caCertPEM != nil || len(caCertPEM) > 0 {
+	if caCertPEM != nil && len(caCertPEM) > 0 {
 		// Use custom CA
 		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM(caCertPEM) {
@@ -50,6 +54,15 @@ func NewCryptClient(host string, port int, caCertPEM []byte) (*CryptClient, erro
 		}
 		client.TLSConfig.RootCAs = caCertPool
 	}
+	if certPath != "" {
+		// Tell client to present its identity to server
+		clientCert, err := tls.LoadX509KeyPair(certPath, certKeyPath)
+		if err != nil {
+			return nil, err
+		}
+		client.TLSConfig.Certificates = []tls.Certificate{clientCert}
+	}
+	client.TLSConfig.BuildNameToCertificate()
 	return client, nil
 }
 
@@ -71,7 +84,7 @@ func NewCryptClientFromSysconfig(sysconf *sys.Sysconfig) (*CryptClient, error) {
 			return nil, fmt.Errorf("NewCryptClientFromSysconfig: failed to read CA PEM file at \"%s\" - %v", ca, err)
 		}
 	}
-	return NewCryptClient(host, port, caCertPEM)
+	return NewCryptClient(host, port, caCertPEM, sysconf.GetString(CLIENT_CONF_CERT, ""), sysconf.GetString(CLIENT_CONF_CERT_KEY, ""))
 }
 
 /*
@@ -97,6 +110,15 @@ func (client *CryptClient) DoRPC(fun func(*rpc.Client) error) error {
 	return nil
 }
 
+// Retrieve the salt that was used to hash server's access password.
+func (client *CryptClient) GetSalt() (salt PasswordSalt, err error) {
+	err = client.DoRPC(func(rpcClient *rpc.Client) error {
+		var dummy DummyAttr
+		return rpcClient.Call(fmt.Sprintf(RPCObjNameFmt, "GetSalt"), &dummy, &salt)
+	})
+	return
+}
+
 // Ping RPC server. Return an error if there is a communication mishap or server has not undergone the initial setup.
 func (client *CryptClient) Ping(req PingRequest) error {
 	return client.DoRPC(func(rpcClient *rpc.Client) error {
@@ -105,12 +127,12 @@ func (client *CryptClient) Ping(req PingRequest) error {
 	})
 }
 
-// Save a new key record.
-func (client *CryptClient) SaveKey(req SaveKeyReq) error {
-	return client.DoRPC(func(rpcClient *rpc.Client) error {
-		var dummy DummyAttr
-		return rpcClient.Call(fmt.Sprintf(RPCObjNameFmt, "SaveKey"), req, &dummy)
+// Create a new key record.
+func (client *CryptClient) CreateKey(req CreateKeyReq) (resp CreateKeyResp, err error) {
+	err = client.DoRPC(func(rpcClient *rpc.Client) error {
+		return rpcClient.Call(fmt.Sprintf(RPCObjNameFmt, "CreateKey"), req, &resp)
 	})
+	return
 }
 
 // Retrieve encryption keys without a password.
@@ -165,10 +187,11 @@ func (client *CryptClient) Shutdown(req ShutdownReq) error {
 }
 
 // Start an RPC server in a testing configuration, return a client connected to the server and a teardown function.
-func StartTestServer(tb testing.TB) (client *CryptClient, tearDown func(testing.TB)) {
+func StartTestServer(tb testing.TB) (*CryptClient, func(testing.TB)) {
 	keydbDir, err := ioutil.TempDir("", "cryptctl-rpctest")
 	if err != nil {
 		tb.Fatal(err)
+		return nil, nil
 	}
 	// Fill in configuration blanks (listen port is left at default)
 	salt := NewSalt()
@@ -185,34 +208,49 @@ func StartTestServer(tb testing.TB) (client *CryptClient, tearDown func(testing.
 	srv, err := NewCryptServer(srvConf, Mailer{})
 	if err != nil {
 		tb.Fatal(err)
+		return nil, nil
 	}
-	tearDown = func(t testing.TB) {
-		if err := client.Shutdown(ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
-			t.Fatal(err)
-		}
-		if err := client.Ping(PingRequest{Password: TEST_RPC_PASS}); err == nil {
-			t.Fatal("server did not shutdown")
-		}
-		if err := os.RemoveAll(keydbDir); err != nil {
-			t.Fatal(err)
-		}
+	if err := srv.ListenRPC(); err != nil {
+		tb.Fatal(err)
+		return nil, nil
 	}
+	go srv.HandleConnections()
 	// The test certificate's CN is "localhost"
 	caPath := path.Join(PkgInGopath, "keyrpc", "rpc_test.crt")
 	certContent, err := ioutil.ReadFile(caPath)
 	// Construct a client via function parameters
-	client, err = NewCryptClient("localhost", 3737, certContent)
+	client, err := NewCryptClient("localhost", 3737, certContent, "", "")
 	if err != nil {
 		tb.Fatal(err)
+		return nil, nil
 	}
-	go srv.ListenRPC()
+	client.TLSConfig.InsecureSkipVerify = true
 	// Server should start within about 2 seconds
-	for i := 0; i < 10; i++ {
-		if err := client.Ping(PingRequest{Password: TEST_RPC_PASS}); err == nil {
-			return
+	serverReady := false
+	for i := 0; i < 20; i++ {
+		if err := client.Ping(PingRequest{Password: HashPassword(salt, TEST_RPC_PASS)}); err == nil {
+			serverReady = true
+			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	tb.Fatal("server did not start in time")
-	return nil, nil
+	if !serverReady {
+		tb.Fatal("server did not start in time")
+		return nil, nil
+	}
+	tearDown := func(t testing.TB) {
+		if err := client.Shutdown(ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
+			t.Fatal(err)
+			return
+		}
+		if err := client.Ping(PingRequest{Password: HashPassword(salt, TEST_RPC_PASS)}); err == nil {
+			t.Fatal("server did not shutdown")
+			return
+		}
+		if err := os.RemoveAll(keydbDir); err != nil {
+			t.Fatal(err)
+			return
+		}
+	}
+	return client, tearDown
 }

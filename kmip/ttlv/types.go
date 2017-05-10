@@ -53,7 +53,7 @@ func (com TTL) WriteTTTo(out *bytes.Buffer) {
 // TTLV structure. Length of value is sum of item lengths including padding.
 type Structure struct {
 	TTL
-	Items []interface{}
+	Items []Item
 }
 
 func (st *Structure) GetTTL() TTL {
@@ -66,7 +66,7 @@ func (st *Structure) GetLength() int {
 		// Structure length counts individual item's TTL
 		newLen += LenTTL
 		// Item value length does not include padding
-		itemLen := item.(Item).GetLength()
+		itemLen := item.GetLength()
 		// But structure length counts padding
 		newLen += RoundUpTo8(itemLen)
 	}
@@ -80,9 +80,8 @@ func (st *Structure) ResetTyp() {
 
 // Construct a new structure with the specified tag, place the items inside the structure as well. Each item must be a pointer to Item.
 func NewStructure(tag Tag, items ...Item) *Structure {
-	ret := &Structure{TTL: TTL{Tag: tag, Typ: TypStruct}, Items: make([]interface{}, 0, 8)}
+	ret := &Structure{TTL: TTL{Tag: tag, Typ: TypStruct}, Items: make([]Item, 0, 8)}
 	for _, item := range items {
-		item.ResetTyp()
 		ret.Items = append(ret.Items, item)
 	}
 	return ret

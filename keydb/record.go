@@ -27,17 +27,16 @@ When stored on disk, the record resides in a file encoded in gob.
 The binary encoding method is intentionally chosen to deter users from manually editing the files on disk.
 */
 type Record struct {
-	UUID             string                    // partition UUID
 	ID               string                    // KMIP key ID
-	KeyOnKMIP        bool                      // true only if key content is located on an external KMIP server
-	CreationTime     time.Time                 // creation time
 	Version          int                       // Record version
+	CreationTime     time.Time                 // creation time
 	Key              []byte                    // encryption key in plain form
-	MountPoint       string                    // mount point on client computer
-	MountOptions     []string                  // file system's mount options
+	UUID             string                    // file system uuid
+	MountPoint       string                    // mount point of the file system
+	MountOptions     []string                  // mount options of the file system
 	MaxActive        int                       // maximum allowed active key users (computers), set to <=0 to allow unlimited.
 	LastRetrieval    AliveMessage              // the most recent host who retrieved this key
-	AliveIntervalSec int                       // interval in seconds at which all client computers holding this key must report their liveness
+	AliveIntervalSec int                       // interval in seconds at which all user of the file system holding this key must report they're online
 	AliveCount       int                       // a client computer is considered dead after missing so many alive messages
 	AliveMessages    map[string][]AliveMessage // recent alive messages (latest is last), string map key is the host IP as seen by this server.
 }
@@ -170,11 +169,12 @@ func (rec *Record) Deserialise(in []byte) error {
 
 // Format all attributes (except the binary key) for pretty printing, using the specified separator.
 func (rec *Record) FormatAttrs(separator string) string {
-	return fmt.Sprintf(`Timestamp="%d"%sIP="%s"%sHostname="%s"%sFileSystemUUID="%s"%sMountPoint="%s"%sMountOptions="%s"`,
+	return fmt.Sprintf(`Timestamp="%d"%sIP="%s"%sHostname="%s"%sFileSystemUUID="%s"%sKMIPID="%s"%sMountPoint="%s"%sMountOptions="%s"`,
 		rec.LastRetrieval.Timestamp, separator,
 		rec.LastRetrieval.IP, separator,
 		rec.LastRetrieval.Hostname, separator,
 		rec.UUID, separator,
+		rec.ID, separator,
 		strings.Replace(rec.MountPoint, `"`, `\"`, -1), separator,
 		rec.GetMountOptionStr())
 }

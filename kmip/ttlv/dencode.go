@@ -87,17 +87,20 @@ func EncodeIntBigEndian(someInt interface{}) []byte {
 	return buf.Bytes()
 }
 
-// Encode any TTLV item. Input must be pointer to item.
-func EncodeAny(thing interface{}) (ret []byte) {
+// Encode any TTLV item. Input must be pointer to item and must not be nil.
+func EncodeAny(thing Item) (ret []byte) {
 	buf := new(bytes.Buffer)
+	// Tolerate constructed TTLV items that did not carry a type byte
 	switch t := thing.(type) {
 	case *Structure:
+		t.ResetTyp()
 		t.TTL.WriteTTTo(buf)
 		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		for _, item := range t.Items {
 			buf.Write(EncodeAny(item))
 		}
 	case *Integer:
+		t.ResetTyp()
 		t.TTL.WriteTTTo(buf)
 		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		// Integer has length of 4
@@ -105,11 +108,13 @@ func EncodeAny(thing interface{}) (ret []byte) {
 		// An additional 4 bytes of padding not counted against length
 		buf.Write([]byte{0, 0, 0, 0})
 	case *LongInteger:
+		t.ResetTyp()
 		t.TTL.WriteTTTo(buf)
 		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		// LongInteger has length of 8
 		buf.Write(EncodeIntBigEndian(t.Value))
 	case *Enumeration:
+		t.ResetTyp()
 		t.TTL.WriteTTTo(buf)
 		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		// Enumeration has length of 4
@@ -117,11 +122,13 @@ func EncodeAny(thing interface{}) (ret []byte) {
 		// An additional 4 bytes of padding not counted against length
 		buf.Write([]byte{0, 0, 0, 0})
 	case *DateTime:
+		t.ResetTyp()
 		t.TTL.WriteTTTo(buf)
 		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		// DateTime has length of 8
 		buf.Write(EncodeIntBigEndian(t.Time.Unix()))
 	case *Text:
+		t.ResetTyp()
 		t.TTL.WriteTTTo(buf)
 		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		buf.Write([]byte(t.Value))
@@ -129,12 +136,15 @@ func EncodeAny(thing interface{}) (ret []byte) {
 		padding := make([]byte, RoundUpTo8(len(t.Value))-len(t.Value))
 		buf.Write(padding)
 	case *Bytes:
+		t.ResetTyp()
 		t.TTL.WriteTTTo(buf)
 		buf.Write(EncodeIntBigEndian(int32(t.GetLength())))
 		buf.Write(t.Value)
 		// Pad with zero bytes to line up with 8
 		padding := make([]byte, RoundUpTo8(len(t.Value))-len(t.Value))
 		buf.Write(padding)
+	default:
+		log.Panicf("EncodeAny: input is nil or type \"%s\"'s encoder is not implemented", reflect.TypeOf(thing).String())
 	}
 	return buf.Bytes()
 }
@@ -156,6 +166,8 @@ func DecodeAny(in []byte) (ret Item, length int, err error) {
 	tag, typ, length32, err := DecodeTTL(in)
 	length = int(length32)
 	if err == io.EOF {
+		// The condition of reaching end of buffer is not an error
+		err = nil
 		return
 	} else if err != nil {
 		return
@@ -191,7 +203,7 @@ func DecodeAny(in []byte) (ret Item, length int, err error) {
 		ret = long
 	case TypStruct:
 		in = in[:length]
-		structure := &Structure{TTL: common, Items: make([]interface{}, 0, 4)}
+		structure := &Structure{TTL: common, Items: make([]Item, 0, 4)}
 		itemIndex := 0
 		for {
 			// Decode item at current index
@@ -229,6 +241,8 @@ func DecodeAny(in []byte) (ret Item, length int, err error) {
 	default:
 		return nil, length, fmt.Errorf("DecodeAny: does not know how to decode %s's type", common.TTLString())
 	}
+	// Type byte was not directly decoded from input buffer by the switch structure above, hence it is set here.
+	ret.ResetTyp()
 	return
 }
 

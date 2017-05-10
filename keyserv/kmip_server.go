@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/HouzuoGuo/cryptctl/fs"
 	"github.com/HouzuoGuo/cryptctl/keydb"
 	"github.com/HouzuoGuo/cryptctl/kmip/structure"
 	"github.com/HouzuoGuo/cryptctl/kmip/ttlv"
@@ -17,18 +16,18 @@ import (
 	"time"
 )
 
-// Create a new disk encryption key out of entropy from cryptographic random pool.
-func GetNewDiskEncryptionKey() []byte {
-	random := make([]byte, fs.LUKS_KEY_SIZE_I)
-	if _, err := rand.Read(random); err != nil {
-		log.Fatalf("GetNewDiskEncryptionKey: system is out of entropy - %v", err)
-	}
-	return random
-}
-
 const (
 	LenKMIPRandomPass = 256 // length of random password validated by KMIP server
 )
+
+// Create a new disk encryption key out of entropy from cryptographic random pool.
+func GetNewDiskEncryptionKeyBits() []byte {
+	random := make([]byte, KMIPAESKeySizeBits/8)
+	if _, err := rand.Read(random); err != nil {
+		log.Fatalf("GetNewDiskEncryptionKeyBits: system is out of entropy - %v", err)
+	}
+	return random
+}
 
 /*
 A partially implemented KMIP protocol server that creates and serves encryption keys upon request. The implementation
@@ -55,27 +54,33 @@ func NewKMIPServer(db *keydb.DB, certFilePath, certKeyPath string) (*KMIPServer,
 	return server, nil
 }
 
-// Start KMIP server and process incoming requests, block caller until listener is told to shut down.
-func (srv *KMIPServer) Listen() (err error) {
+// Start KMIP server's listener.
+func (srv *KMIPServer) Listen() error {
 	// KMIP challenge is similar to shutdown challenge, but it is encoded into string.
 	randPass := make([]byte, LenKMIPRandomPass)
-	if _, err = rand.Read(randPass); err != nil {
-		return
+	if _, err := rand.Read(randPass); err != nil {
+		return err
 	}
 	// In protocol specification, KMIP authentication password has to be a text string, hence the password challenge is encoded here.
 	srv.PasswordChallenge = []byte(hex.EncodeToString(randPass))
-	srv.Listener, err = tls.Listen("tcp", "127.0.0.1:0", srv.TLSConfig)
+	var err error
+	srv.Listener, err = tls.Listen("tcp", "localhost:0", srv.TLSConfig)
 	if err != nil {
-		return
+		return err
 	}
 	log.Printf("KMIPServer.Listen: listening on 127.0.0.1:%d", srv.GetPort())
+	return nil
+}
+
+// Process incoming KMIP requests, block caller until listener is told to shut down.
+func (srv *KMIPServer) HandleConnections() {
 	for {
-		incoming, err := srv.Listener.Accept()
+		conn, err := srv.Listener.Accept()
 		if err != nil {
 			log.Printf("KMIPServer.Listen: quit now - %v", err)
-			return nil
+			return
 		}
-		go srv.HandleConnection(incoming)
+		go srv.HandleConnection(conn)
 	}
 }
 
@@ -84,28 +89,39 @@ func (srv *KMIPServer) GetPort() int {
 	return srv.Listener.Addr().(*net.TCPAddr).Port
 }
 
+// Close listener and shutdown service.
+func (srv *KMIPServer) Shutdown() {
+	if listener := srv.Listener; listener != nil {
+		srv.Listener.Close()
+	}
+}
+
 /*
 Converse with KMIP client.
 This KMIP server is made only for cryptctl's own KMIP client, hence a lot of validation work are skipped intentionally.
 Normally KMIP service is capable of handling more than one requests per connection, but cryptctl's own KMIP client only
 submits one request per connection.
 */
-func (srv *KMIPServer) HandleConnection(client net.Conn) {
+func (srv *KMIPServer) HandleConnection(conn net.Conn) {
 	defer func() {
 		/*
 		 In the unlikely case that user connects a fully featured KMIP client to this server and the client
 		 unexpectedly triggers a buffer handling issue, the error is logged here and then ignored.
 		*/
 		if r := recover(); r != nil {
-			log.Printf("KMIPServer.HandleConnection: panic occured with client %s - %v", client.RemoteAddr().String(), r)
+			log.Printf("KMIPServer.HandleConnection: panic occured with client %s - %v", conn.RemoteAddr().String(), r)
 		}
 	}()
-	defer client.Close()
+	defer conn.Close()
 	var err error
 	var successfulDecodeAttempt structure.SerialisedItem
 	decodeAttempts := []structure.SerialisedItem{&structure.SCreateRequest{}, &structure.SGetRequest{}, &structure.SDestroyRequest{}}
-	log.Printf("KMIPServer.HandleConnection: connected from %s", client.RemoteAddr().String())
-	ttlvItem, err := ReadFullTTLV(client)
+	log.Printf("KMIPServer.HandleConnection: connected from %s", conn.RemoteAddr().String())
+	ttlvItem, err := ReadFullTTLV(conn)
+	if err != nil {
+		log.Printf("KMIPServer.HandleConnection: IO failure occured with client %s - %v", conn.RemoteAddr().String(), err)
+		return
+	}
 	// Try decoding request into request structures and see which one succeeds
 	for _, attempt := range decodeAttempts {
 		if decodeErr := attempt.DeserialiseFromTTLV(ttlvItem); decodeErr == nil {
@@ -114,14 +130,15 @@ func (srv *KMIPServer) HandleConnection(client net.Conn) {
 		}
 	}
 	if successfulDecodeAttempt == nil {
-		err = fmt.Errorf("Server does not understand request:\n%s", ttlv.DebugTTLVItem(0, ttlvItem))
+		err = fmt.Errorf("Server does not understand request from client %s", conn.RemoteAddr())
 		goto Error
 	}
-	if err = srv.HandleRequest(successfulDecodeAttempt, client); err != nil {
+	if err = srv.HandleRequest(successfulDecodeAttempt, conn); err != nil {
 		goto Error
 	}
+	return
 Error:
-	log.Printf("KMIPServer.HandleConnection: error occured with client %s - %v", client.RemoteAddr().String(), err)
+	log.Printf("KMIPServer.HandleConnection: error occured with client %s - %v", conn.RemoteAddr().String(), err)
 }
 
 // Try to match KMIP request's password with server's challenge. If there is a mismatch, return an error.
@@ -137,7 +154,7 @@ func (srv *KMIPServer) CheckPassword(header structure.SRequestHeader) error {
 /*
 Handle a KMIP request, produce a response structure and send it back to client.
 */
-func (srv *KMIPServer) HandleRequest(req structure.SerialisedItem, client net.Conn) (err error) {
+func (srv *KMIPServer) HandleRequest(req structure.SerialisedItem, conn net.Conn) (err error) {
 	defer func() {
 		/*
 			The KMIP request only comes from cryptctl program itself, so all type assertions and attributes
@@ -150,35 +167,23 @@ func (srv *KMIPServer) HandleRequest(req structure.SerialisedItem, client net.Co
 	var resp structure.SerialisedItem
 	switch t := req.(type) {
 	case *structure.SCreateRequest:
-		if err = srv.CheckPassword(t.SRequestHeader); err != nil {
-			return
-		}
-		resp, err = srv.HandleCreateRequest(t)
-		if err != nil {
-			return
+		if err = srv.CheckPassword(t.SRequestHeader); err == nil {
+			resp, err = srv.HandleCreateRequest(t)
 		}
 	case *structure.SGetRequest:
-		if err := srv.CheckPassword(t.SRequestHeader); err != nil {
-			return err
-		}
-		resp, err = srv.HandleGetRequest(t)
-		if err != nil {
-			return
+		if err := srv.CheckPassword(t.SRequestHeader); err == nil {
+			resp, err = srv.HandleGetRequest(t)
 		}
 	case *structure.SDestroyRequest:
-		if err := srv.CheckPassword(t.SRequestHeader); err != nil {
-			return err
-		}
-		resp, err = srv.HandleDestroyRequest(t)
-		if err != nil {
-			return
+		if err := srv.CheckPassword(t.SRequestHeader); err == nil {
+			resp, err = srv.HandleDestroyRequest(t)
 		}
 	default:
-		return fmt.Errorf("KMIPServer.HandleRequest: unknown request type %s", reflect.TypeOf(req).String())
+		err = fmt.Errorf("KMIPServer.HandleRequest: unknown request type %s", reflect.TypeOf(req).String())
 	}
-	client.SetWriteDeadline(time.Now().Add(KMIPTimeoutSec * time.Second))
-	if _, err = client.Write(ttlv.EncodeAny(resp.SerialiseToTTLV())); err != nil {
-		return err
+	if err == nil {
+		conn.SetWriteDeadline(time.Now().Add(KMIPTimeoutSec * time.Second))
+		_, err = conn.Write(ttlv.EncodeAny(resp.SerialiseToTTLV()))
 	}
 	return
 }
@@ -188,7 +193,7 @@ func (srv *KMIPServer) HandleCreateRequest(req *structure.SCreateRequest) (*stru
 	var keyName string
 	for _, attr := range req.SRequestBatchItem.SRequestPayload.(*structure.SRequestPayloadCreate).STemplateAttribute.Attributes {
 		if attr.TAttributeName.Value == structure.ValAttributeNameKeyName {
-			keyName = attr.AttributeValue.(*ttlv.Structure).Items[0].(ttlv.Text).Value
+			keyName = attr.AttributeValue.(*ttlv.Structure).Items[0].(*ttlv.Text).Value
 		}
 	}
 	/*
@@ -199,8 +204,9 @@ func (srv *KMIPServer) HandleCreateRequest(req *structure.SCreateRequest) (*stru
 	kmipID, err := srv.DB.Upsert(keydb.Record{
 		UUID:         keyName,
 		CreationTime: creationTime,
-		Key:          GetNewDiskEncryptionKey(),
+		Key:          GetNewDiskEncryptionKeyBits(),
 	})
+	log.Printf("KMIPServer.HandleCreateRequest: just created a key named \"%s\" ID \"%s\"", keyName, kmipID)
 	if err != nil {
 		return nil, err
 	}

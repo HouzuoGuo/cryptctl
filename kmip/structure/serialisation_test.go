@@ -15,7 +15,7 @@ func TestSerialiseSimpleStruct(t *testing.T) {
 			Tag: TagCredential,
 			Typ: ttlv.TypStruct,
 		},
-		Items: []interface{}{
+		Items: []ttlv.Item{
 			&ttlv.Enumeration{
 				TTL: ttlv.TTL{
 					Tag: TagCredentialType,
@@ -28,7 +28,7 @@ func TestSerialiseSimpleStruct(t *testing.T) {
 					Tag: TagCredentialValue,
 					Typ: ttlv.TypStruct,
 				},
-				Items: []interface{}{
+				Items: []ttlv.Item{
 					&ttlv.Text{
 						TTL: ttlv.TTL{
 							Tag: TagUsername,

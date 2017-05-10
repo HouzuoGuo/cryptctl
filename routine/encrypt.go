@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/HouzuoGuo/cryptctl/fs"
-	"github.com/HouzuoGuo/cryptctl/keydb"
-	"github.com/HouzuoGuo/cryptctl/keyrpc"
+	"github.com/HouzuoGuo/cryptctl/keyserv"
 	"github.com/HouzuoGuo/cryptctl/sys"
 	"io"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -39,9 +39,21 @@ const (
 	MSG_E_MKDIR                   = "Failed to make directory \"%s\" - %v"
 	MSG_E_RENAME_DIR              = "Failed to rename directory \"%s\" into \"%s\" - %v"
 	MSG_E_NO_DEV_INFO             = "Failed to retrieve block device information of \"%s\""
-	MSG_E_RPC_KEY_SAVE            = "Failed to upload key record: %v"
+	MSG_E_RPC_KEY_CREATE          = "Failed to create an encryption key: %v"
 	MSG_OK_CONGRATS               = "\nCongratulations! Data in \"%s\" is now safely encrypted in \"%s\".\nRemember to manually delete the original un-encrypted copy in \"%s\".\n"
 )
+
+// Create a new UUID.
+func MakeUUID() string {
+	buf := make([]byte, 16)
+	_, err := rand.Read(buf)
+	if err != nil {
+		log.Panicf("MakeUUID: random source ran dry - %v", err)
+	}
+	buf[8] = (buf[8] | 0x80) & 0xBF
+	buf[6] = (buf[6] | 0x40) & 0x4F
+	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:])
+}
 
 // Return a computed mapper device name from a crypto device name.
 func MakeDeviceMapperName(devName string) string {
@@ -168,9 +180,32 @@ func EncryptFS(progressOut io.Writer, client *keyserv.CryptClient,
 		return "", err
 	}
 
+	// Step 1 - ask server for an encryption key
+	mountPoints := fs.ParseMtab()
+	srcDirMount, found := mountPoints.GetMountPointOfPath(srcDir)
+	if !found {
+		return "", fmt.Errorf(MSG_E_SRC_DIR_MOUNT_NOT_FOUND, srcDir)
+	}
+	cryptDevUUID := MakeUUID()
+	salt, err := client.GetSalt()
+	if err != nil {
+		return "", fmt.Errorf(MSG_E_RPC_KEY_CREATE, err)
+	}
+	encryptionKeyResp, err := client.CreateKey(keyserv.CreateKeyReq{
+		Password:         keyserv.HashPassword(salt, password),
+		UUID:             cryptDevUUID,
+		MountPoint:       srcDir,
+		MountOptions:     srcDirMount.Options,
+		MaxActive:        keyMaxActive,
+		AliveIntervalSec: keyAliveIntervalSec,
+		AliveCount:       keyAliveCount,
+	})
+	if err != nil {
+		return "", fmt.Errorf(MSG_E_RPC_KEY_CREATE, err)
+	}
+
 	// Step 1. Un-mount the disk to encrypt
 	fmt.Fprintf(progressOut, MSG_STEP_1, encDisk)
-	mountPoints := fs.ParseMtab()
 	for {
 		// Repeat until the disk has no more mount points
 		if mountPoint, found := mountPoints.GetByCriteria(encDisk, "", ""); found {
@@ -183,22 +218,12 @@ func EncryptFS(progressOut io.Writer, client *keyserv.CryptClient,
 		break
 	}
 	// Step 1 (cont). Wipe the disk and install encryption key
-	encryptKey := make([]byte, fs.LUKS_KEY_SIZE_I)
-	_, err = rand.Read(encryptKey)
-	if err != nil {
-		return "", fmt.Errorf(MSG_E_NO_RAND, err)
-
-	}
-	if err := fs.CryptFormat(encryptKey, encDisk); err != nil {
+	if err := fs.CryptFormat(encryptionKeyResp.KeyContent, encDisk, cryptDevUUID); err != nil {
 		return "", err
 	}
 	dmName := MakeDeviceMapperName(encDisk)
-	if err := fs.CryptOpen(encryptKey, encDisk, dmName); err != nil {
+	if err := fs.CryptOpen(encryptionKeyResp.KeyContent, encDisk, dmName); err != nil {
 		return "", err
-	}
-	srcDirMount, found := mountPoints.GetMountPointOfPath(srcDir)
-	if !found {
-		return "", fmt.Errorf(MSG_E_SRC_DIR_MOUNT_NOT_FOUND, srcDir)
 	}
 	encDiskMapper := path.Join("/dev/mapper", dmName)
 	if err := fs.Format(encDiskMapper, srcDirMount.FileSystem); err != nil {
@@ -242,21 +267,6 @@ func EncryptFS(progressOut io.Writer, client *keyserv.CryptClient,
 	cryptDev, found := fs.GetBlockDevice(encDisk)
 	if !found {
 		return "", fmt.Errorf(MSG_E_NO_DEV_INFO, encDisk)
-	}
-	keyRecord := keydb.Record{
-		UUID:             cryptDev.UUID,
-		Key:              encryptKey,
-		MountPoint:       srcDir,
-		MountOptions:     srcDirMount.Options,
-		MaxActive:        keyMaxActive,
-		AliveIntervalSec: keyAliveIntervalSec,
-		AliveCount:       keyAliveCount,
-	}
-	if err := client.SaveKey(keyserv.SaveKeyReq{
-		Password: password,
-		Record:   keyRecord,
-	}); err != nil {
-		return "", fmt.Errorf(MSG_E_RPC_KEY_SAVE, err)
 	}
 	fmt.Fprintf(progressOut, MSG_OK_CONGRATS, srcDir, encDisk, srcDataDir)
 	return cryptDev.UUID, nil

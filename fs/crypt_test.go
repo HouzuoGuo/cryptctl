@@ -6,7 +6,7 @@ import "testing"
 
 // The unit test simply makes sure that the functions do not crash, it does not set up an encrypted device node.
 func TestCryptSetup(t *testing.T) {
-	if err := CryptFormat([]byte{}, "doesnotexist"); err == nil {
+	if err := CryptFormat([]byte{}, "doesnotexist", "testuuid"); err == nil {
 		t.Fatal("did not error")
 	}
 	if err := CryptOpen([]byte{}, "doesnotexist", "doesnotexist"); err == nil {
