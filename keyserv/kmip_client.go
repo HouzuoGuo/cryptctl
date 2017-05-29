@@ -169,13 +169,11 @@ func ResponseItemToError(resp structure.SResponseBatchItem) error {
 func (client *KMIPClient) CreateKey(keyName string) (id string, err error) {
 	defer func() {
 		// In the unlikely case that a misbehaving server causes client to crash.
-		/*
-			if r := recover(); r != nil {
-				msg := fmt.Sprintf("KMIPClient.CreateKey: the function crashed due to programming error - %v", r)
-				log.Print(msg)
-				err = errors.New(msg)
-			}
-		*/
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("KMIPClient.CreateKey: the function crashed due to programming error - %v", r)
+			log.Print(msg)
+			err = errors.New(msg)
+		}
 	}()
 	resp, err := client.MakeRequest(&structure.SCreateRequest{
 		SRequestHeader: client.GetRequestHeader(),
