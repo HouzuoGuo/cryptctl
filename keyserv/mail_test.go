@@ -3,6 +3,7 @@
 package keyserv
 
 import (
+	"net"
 	"testing"
 )
 
@@ -41,6 +42,13 @@ func TestMailerSend(t *testing.T) {
 	m := Mailer{Recipients: []string{"a@b.c"}, FromAddress: "me@a.example", AgentAddressPort: "a.example:25"}
 	if err := m.Send("abc", "123"); err == nil {
 		t.Fatal("did not error")
+	}
+	if _, err := net.Dial("tcp", "localhost:25"); err != nil {
+		t.Skip("an MTA on localhost would be required to continue this test")
+	}
+	m = Mailer{Recipients: []string{"root@localhost"}, FromAddress: "root@localhost", AgentAddressPort: "localhost:25"}
+	if err := m.Send("cryptctl mailer test subject", "cryptctl mailer test text body"); err != nil {
+		t.Fatal(err)
 	}
 }
 

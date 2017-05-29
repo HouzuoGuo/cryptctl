@@ -78,8 +78,20 @@ EMAIL_FROM_ADDRESS=""
 ## Default: ""
 #
 # Mail agent address and port number in the format of "address:port". The address must be fully qualified domain name.
-# If all Email parameters are filled in, notifications will be sent upon key creation/retrieval events.
+# If this parameter is set, mail notifications will be sent upon key creation/retrieval events.
 EMAIL_AGENT_AND_PORT=""
+
+## Type:    string
+## Default: ""
+#
+# Mail agent plain authentication username (optional).
+EMAIL_AGENT_USERNAME=""
+
+## Type:    string
+## Default: ""
+#
+# Mail agent plain authentication password (optional).
+EMAIL_AGENT_PASSWORD=""
 
 ## Type:    string
 ## Default: "A new file system has been encrypted"

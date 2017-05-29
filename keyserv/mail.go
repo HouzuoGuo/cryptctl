@@ -13,6 +13,8 @@ const (
 	SRV_CONF_MAIL_RECIPIENTS     = "EMAIL_RECIPIENTS"
 	SRV_CONF_MAIL_FROM_ADDR      = "EMAIL_FROM_ADDRESS"
 	SRV_CONF_MAIL_AGENT_AND_PORT = "EMAIL_AGENT_AND_PORT"
+	SRV_CONF_MAIL_AGENT_USERNAME = "EMAIL_AGENT_USERNAME"
+	SRV_CONF_MAIL_AGENT_PASSWORD = "EMAIL_AGENT_PASSWORD"
 )
 
 // Return true only if both at-sign and full-stop are in the string.
@@ -25,6 +27,8 @@ type Mailer struct {
 	Recipients       []string // List of Email addresses that receive notifications
 	FromAddress      string   // FROM address of the notifications
 	AgentAddressPort string   // Address and port number of mail transportation agent for sending notifications
+	AuthUsername     string   // (Optional) Username for plain authentication, if the SMTP server requires it.
+	AuthPassword     string   // (Optional) Password for plain authentication, if the SMTP server requires it.
 }
 
 // Return true only if all mail parameters are present.
@@ -65,11 +69,17 @@ func (mail *Mailer) ValidateConfig() error {
 
 // Deliver an email to all recipients.
 func (mail *Mailer) Send(subject, text string) error {
-	msg := fmt.Sprintf("Subject: %s\r\n\r\n%s", subject, text)
-	if err := smtp.SendMail(mail.AgentAddressPort, nil, mail.FromAddress, mail.Recipients, []byte(msg)); err != nil {
-		return fmt.Errorf("Send: failed to send email to \"%v\" - %v", mail.Recipients, err)
+	if mail.Recipients == nil || len(mail.Recipients) == 0 {
+		return fmt.Errorf("No recipient specified for mail \"%s\"", subject)
 	}
-	return nil
+	var auth smtp.Auth
+	if mail.AuthUsername != "" {
+		auth = smtp.PlainAuth("", mail.AuthUsername, mail.AuthPassword, mail.AgentAddressPort)
+	}
+	// Construct appropriate mail headers
+	mailBody := fmt.Sprintf("MIME-Version: 1.0\r\nContent-type: text/plain; charset=utf-8\r\nFrom: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s",
+		mail.FromAddress, strings.Join(mail.Recipients, ", "), subject, text)
+	return smtp.SendMail(mail.AgentAddressPort, auth, mail.FromAddress, mail.Recipients, []byte(mailBody))
 }
 
 // Read mail settings from keys in sysconfig file.
@@ -77,4 +87,6 @@ func (mail *Mailer) ReadFromSysconfig(sysconf *sys.Sysconfig) {
 	mail.Recipients = sysconf.GetStringArray(SRV_CONF_MAIL_RECIPIENTS, []string{})
 	mail.FromAddress = sysconf.GetString(SRV_CONF_MAIL_FROM_ADDR, "")
 	mail.AgentAddressPort = sysconf.GetString(SRV_CONF_MAIL_AGENT_AND_PORT, "")
+	mail.AuthUsername = sysconf.GetString(SRV_CONF_MAIL_AGENT_USERNAME, "")
+	mail.AuthPassword = sysconf.GetString(SRV_CONF_MAIL_AGENT_PASSWORD, "")
 }

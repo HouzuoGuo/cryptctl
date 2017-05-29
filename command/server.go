@@ -258,6 +258,16 @@ Important notes for client computers:
 		sysconf.Set(keyserv.SRV_CONF_MAIL_AGENT_AND_PORT, mta)
 	}
 	if sysconf.GetString(keyserv.SRV_CONF_MAIL_AGENT_AND_PORT, "") != "" {
+		if username := sys.Input(false,
+			sysconf.GetString(keyserv.SRV_CONF_MAIL_AGENT_USERNAME, ""),
+			"Plain authentication username for access to mail agent (optional)"); username != "" {
+			sysconf.Set(keyserv.SRV_CONF_MAIL_AGENT_USERNAME, username)
+			if password := sys.Input(false,
+				sysconf.GetString(keyserv.SRV_CONF_MAIL_AGENT_PASSWORD, ""),
+				"Plain authentication password for access to mail agent (optional)"); password != "" {
+				sysconf.Set(keyserv.SRV_CONF_MAIL_AGENT_PASSWORD, password)
+			}
+		}
 		if fromAddr := sys.Input(false,
 			sysconf.GetString(keyserv.SRV_CONF_MAIL_FROM_ADDR, ""),
 			"Notification email's FROM address such as \"root@example.com\""); fromAddr != "" {
