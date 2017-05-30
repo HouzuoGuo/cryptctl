@@ -1,6 +1,7 @@
 package structure
 
 import (
+	"errors"
 	"fmt"
 	"github.com/HouzuoGuo/cryptctl/kmip/ttlv"
 )
@@ -26,6 +27,9 @@ func (getReq *SGetRequest) DeserialiseFromTTLV(in ttlv.Item) error {
 	getReq.SRequestBatchItem = SRequestBatchItem{SRequestPayload: &SRequestPayloadGet{}}
 	if err := DecodeStructItem(in, TagRequestMessage, TagBatchItem, &getReq.SRequestBatchItem); err != nil {
 		return err
+	}
+	if getReq.SRequestBatchItem.EOperation.Value != ValOperationGet {
+		return errors.New("SGetRequest.DeserialiseFromTTLV: input is not a get request")
 	}
 	return nil
 }
@@ -67,6 +71,9 @@ func (getResp *SGetResponse) DeserialiseFromTTLV(in ttlv.Item) error {
 	getResp.SResponseBatchItem = SResponseBatchItem{SResponsePayload: &SResponsePayloadGet{}}
 	if err := DecodeStructItem(in, TagResponseMessage, TagBatchItem, &getResp.SResponseBatchItem); err != nil {
 		return err
+	}
+	if getResp.SResponseBatchItem.EOperation.Value != ValOperationGet {
+		return errors.New("SGetResponse.DeserialiseFromTTLV: input is not a get response")
 	}
 	return nil
 }

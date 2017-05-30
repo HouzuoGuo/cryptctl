@@ -268,7 +268,7 @@ func (client *KMIPClient) DestroyKey(id string) (err error) {
 	defer func() {
 		// In the unlikely case that a misbehaving server causes client to crash.
 		if r := recover(); r != nil {
-			msg := fmt.Sprintf("KMIPClient.GetKey: (ID %s) the function crashed due to programming error - %v", id, r)
+			msg := fmt.Sprintf("KMIPClient.DestroyKey: (ID %s) the function crashed due to programming error - %v", id, r)
 			log.Print(msg)
 			err = errors.New(msg)
 		}
@@ -285,6 +285,12 @@ func (client *KMIPClient) DestroyKey(id string) (err error) {
 	if err != nil {
 		return
 	}
-	err = ResponseItemToError(resp.(*structure.SDestroyResponse).SResponseBatchItem)
-	return
+	respItem := resp.(*structure.SDestroyResponse).SResponseBatchItem
+	reason := respItem.EResultReason
+	status := respItem.EResultStatus
+	// Not found is not an error
+	if reason.Value == structure.ValResultReasonNotFound || status.Value == structure.ValResultStatusSuccess {
+		return nil
+	}
+	return ResponseItemToError(resp.(*structure.SDestroyResponse).SResponseBatchItem)
 }

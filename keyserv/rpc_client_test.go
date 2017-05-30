@@ -193,12 +193,13 @@ func TestRPCCalls(t *testing.T) {
 	}); err == nil {
 		t.Fatal("did not error")
 	}
+	// Erasing a non-existent key should not result in an error
 	if err := client.EraseKey(EraseKeyReq{
 		Password: HashPassword(salt, TEST_RPC_PASS),
 		Hostname: "localhost",
 		UUID:     "doesnotexist",
-	}); err == nil {
-		t.Fatal("did not error")
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if err := client.EraseKey(EraseKeyReq{
 		Password: HashPassword(salt, TEST_RPC_PASS),
@@ -207,12 +208,13 @@ func TestRPCCalls(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Erasing a non-existent key should not result in an error
 	if err := client.EraseKey(EraseKeyReq{
 		Password: HashPassword(salt, TEST_RPC_PASS),
 		Hostname: "localhost",
 		UUID:     "aaa",
-	}); err == nil {
-		t.Fatal("did not error")
+	}); err != nil {
+		t.Fatal(err)
 	}
 	fmt.Println("About to run teardown")
 }

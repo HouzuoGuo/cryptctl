@@ -1,6 +1,7 @@
 package structure
 
 import (
+	"errors"
 	"fmt"
 	"github.com/HouzuoGuo/cryptctl/kmip/ttlv"
 )
@@ -26,6 +27,9 @@ func (destroyReq *SDestroyRequest) DeserialiseFromTTLV(in ttlv.Item) error {
 	destroyReq.SRequestBatchItem = SRequestBatchItem{SRequestPayload: &SRequestPayloadDestroy{}}
 	if err := DecodeStructItem(in, TagRequestMessage, TagBatchItem, &destroyReq.SRequestBatchItem); err != nil {
 		return err
+	}
+	if destroyReq.SRequestBatchItem.EOperation.Value != ValOperationDestroy {
+		return errors.New("SDestroyRequest.DeserialiseFromTTLV: input is not a destroy request")
 	}
 	return nil
 }
@@ -67,6 +71,9 @@ func (destroyResp *SDestroyResponse) DeserialiseFromTTLV(in ttlv.Item) error {
 	destroyResp.SResponseBatchItem = SResponseBatchItem{SResponsePayload: &SResponsePayloadDestroy{}}
 	if err := DecodeStructItem(in, TagResponseMessage, TagBatchItem, &destroyResp.SResponseBatchItem); err != nil {
 		return err
+	}
+	if destroyResp.SResponseBatchItem.EOperation.Value != ValOperationDestroy {
+		return errors.New("SDestroyResponse.DeserialiseFromTTLV: input is not a destroy response")
 	}
 	return nil
 }

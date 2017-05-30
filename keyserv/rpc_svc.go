@@ -52,6 +52,8 @@ const (
 	SRV_CONF_KMIP_SERVER_TLS_CA   = "KMIP_CA_PEM"
 	SRV_CONF_KMIP_SERVER_TLS_CERT = "KMIP_TLS_CERT_PEM"
 	SRV_CONF_KMIP_SERVER_TLS_KEY  = "KMIP_TLS_CERT_KEY_PEM"
+
+	KeyNamePrefix = "cryptctl-" // Prefix string prepended to KMIP keys
 )
 
 var PkgInGopath = path.Join(path.Join(os.Getenv("GOPATH"), "/src/github.com/HouzuoGuo/cryptctl")) // this package in gopath
@@ -189,6 +191,9 @@ func NewCryptServer(config CryptServiceConfig, mailer Mailer) (srv *CryptServer,
 	if err != nil {
 		return nil, err
 	}
+	/*
+	 The author of TLS related libraries in Go has an opinion about CRL
+	*/
 	srv.TLSConfig.Certificates = make([]tls.Certificate, 1)
 	srv.TLSConfig.Certificates[0], err = tls.LoadX509KeyPair(config.CertPEM, config.KeyPEM)
 	// Configure client authentication upon request
@@ -395,8 +400,14 @@ func (rpcConn *CryptServiceConn) CreateKey(req CreateKeyReq, resp *CreateKeyResp
 	} else if err := req.Validate(); err != nil {
 		return err
 	}
-	// No matter key is located in built-in KMIP server or external KMIP server, the KMIP client needs to create the key.
-	kmipKeyID, err := rpcConn.Svc.KMIPClient.CreateKey(req.UUID)
+	/*
+		No matter key is located in built-in KMIP server or external KMIP server, the KMIP client needs to create the key.
+		But if the KMIP server is an external appliance, having the name prefix makes it more apparent where the key
+		originates.
+		If KMIP server is the built-in one, the server will remove the prefix string before storing record UUID in built-in key database.
+		But key database only recognises UUID, there's no need for a prefix to be stored in key database.
+	*/
+	kmipKeyID, err := rpcConn.Svc.KMIPClient.CreateKey(KeyNamePrefix + req.UUID)
 	if err != nil {
 		return fmt.Errorf("CryptServiceConn.CreateKey: KMIP client refused to create the key - %v", err)
 	}
@@ -603,6 +614,15 @@ type EraseKeyReq struct {
 
 func (rpcConn *CryptServiceConn) EraseKey(req EraseKeyReq, _ *DummyAttr) error {
 	if err := rpcConn.Svc.ValidatePassword(req.Password); err != nil {
+		return err
+	}
+	rec, found := rpcConn.Svc.KeyDB.GetByUUID(req.UUID)
+	if !found {
+		// No need to return error in case key has already disappeared from key server
+		return nil
+	}
+	if err := rpcConn.Svc.KMIPClient.DestroyKey(rec.ID); err != nil {
+		// If KMIP refuses
 		return err
 	}
 	return rpcConn.Svc.KeyDB.Erase(req.UUID)

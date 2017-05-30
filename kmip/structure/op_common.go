@@ -346,6 +346,8 @@ func (respItem SResponseBatchItem) SerialiseToTTLV() ttlv.Item {
 	if respItem.EResultStatus.Value == ValResultStatusSuccess {
 		items = append(items, respItem.SResponsePayload.SerialiseToTTLV())
 	} else {
+		respItem.EResultReason.Tag = TagResultReason
+		respItem.EResultMessage.Tag = TagResultMessage
 		items = append(items, &respItem.EResultReason, &respItem.EResultMessage)
 	}
 	return ttlv.NewStructure(TagBatchItem, items...)

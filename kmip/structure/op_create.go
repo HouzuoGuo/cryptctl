@@ -1,6 +1,7 @@
 package structure
 
 import (
+	"errors"
 	"fmt"
 	"github.com/HouzuoGuo/cryptctl/kmip/ttlv"
 )
@@ -26,6 +27,9 @@ func (createReq *SCreateRequest) DeserialiseFromTTLV(in ttlv.Item) error {
 	createReq.SRequestBatchItem = SRequestBatchItem{SRequestPayload: &SRequestPayloadCreate{}}
 	if err := DecodeStructItem(in, TagRequestMessage, TagBatchItem, &createReq.SRequestBatchItem); err != nil {
 		return err
+	}
+	if createReq.SRequestBatchItem.EOperation.Value != ValOperationCreate {
+		return errors.New("SCreateRequest.DeserialiseFromTTLV: input is not a create request")
 	}
 	return nil
 }
@@ -90,6 +94,9 @@ func (createResp *SCreateResponse) DeserialiseFromTTLV(in ttlv.Item) error {
 	createResp.SResponseBatchItem = SResponseBatchItem{SResponsePayload: &SResponsePayloadCreate{}}
 	if err := DecodeStructItem(in, TagResponseMessage, TagBatchItem, &createResp.SResponseBatchItem); err != nil {
 		return err
+	}
+	if createResp.SResponseBatchItem.EOperation.Value != ValOperationCreate {
+		return errors.New("SCreateResponse.DeserialiseFromTTLV: input is not a create response")
 	}
 	return nil
 }

@@ -72,8 +72,8 @@ func TestKMIP(t *testing.T) {
 	if err := client.DestroyKey("1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.DestroyKey("does not exist"); err == nil {
-		t.Fatal("did not error")
+	if err := client.DestroyKey("does not exist"); err != nil {
+		t.Fatal(err)
 	}
 	// Expect server to shut down within a second
 	server.Shutdown()
@@ -144,7 +144,7 @@ func TestKMIPAgainstPyKMIP(t *testing.T) {
 	if err := client.DestroyKey(id1); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.DestroyKey("does not exist"); err == nil {
-		t.Fatal("did not error")
+	if err := client.DestroyKey("does not exist"); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -181,6 +182,7 @@ func (srv *KMIPServer) HandleRequest(req structure.SerialisedItem, conn net.Conn
 	default:
 		err = fmt.Errorf("KMIPServer.HandleRequest: unknown request type %s", reflect.TypeOf(req).String())
 	}
+	log.Printf("KMIPServer.HandleRequest: handled request type %s from %s, err is %v", reflect.TypeOf(req).String(), conn.RemoteAddr().String(), err)
 	if err == nil {
 		conn.SetWriteDeadline(time.Now().Add(KMIPTimeoutSec * time.Second))
 		_, err = conn.Write(ttlv.EncodeAny(resp.SerialiseToTTLV()))
@@ -202,7 +204,11 @@ func (srv *KMIPServer) HandleCreateRequest(req *structure.SCreateRequest) (*stru
 	*/
 	creationTime := time.Now()
 	kmipID, err := srv.DB.Upsert(keydb.Record{
-		UUID:         keyName,
+		/*
+			Name prefix explains key's origin to make it more visible when stored in an external KMIP appliance.
+			But key database only recognises UUID, there's no need for a prefix to be stored in key database.
+		*/
+		UUID:         strings.TrimPrefix(keyName, KeyNamePrefix),
 		CreationTime: creationTime,
 		Key:          GetNewDiskEncryptionKeyBits(),
 	})

@@ -487,7 +487,8 @@ func TestEncryptDecrypt(t *testing.T) {
 	resetDisks()
 	// Now that server has shut down, try to unlock disks using key records only.
 	if len(srv.KeyDB.RecordsByUUID) != 2 {
-		t.Fatal(srv.KeyDB.RecordsByUUID)
+
+		t.Fatalf("%+v\n", srv.KeyDB.RecordsByUUID)
 	}
 	records := make([]keydb.Record, 0, 0)
 	for _, record := range srv.KeyDB.RecordsByUUID {
