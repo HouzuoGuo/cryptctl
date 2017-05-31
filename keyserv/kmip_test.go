@@ -115,6 +115,51 @@ func TestKMIPAgainstPyKMIP(t *testing.T) {
 	*/
 	t.Skip("Start PyKMIP server manually and remove this skip statement to run this test case")
 	client, err := NewKMIPClient("127.0.0.1", 5696, "testuser", "testpass", nil, "/etc/pykmip/client.crt", "/etc/pykmip/client.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.TLSConfig.InsecureSkipVerify = true
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create two keys
+	var id1, id2 string
+	if id1, err = client.CreateKey("test key 1"); err != nil || id1 == "" {
+		t.Fatal(err, id1)
+	}
+	if id2, err = client.CreateKey("test key 2"); err != nil || id2 == "" {
+		t.Fatal(err, id2)
+	}
+	// Retrieve both keys and non-existent key
+	received1, err := client.GetKey(id1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	received2, err := client.GetKey(id2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.GetKey("does not exist"); err == nil {
+		t.Fatal("did not error")
+	}
+	if reflect.DeepEqual(received1, received2) || len(received1) == 0 {
+		t.Fatal(hex.Dump(received1), hex.Dump(received2))
+	}
+	// Destroy and retrieve again
+	if err := client.DestroyKey(id1); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DestroyKey("does not exist"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestKMIPAgainstHpeEskm(t *testing.T) {
+	//t.Skip("Acquire HPE ESKM credentials and remove this skip statement to run this test case")
+	client, err := NewKMIPClient("hpe.eskm", 5696, "ENTER_USERNAME", "ENTER_PASSWORD", nil, "PATH_TO_CLIENT_CRT", "PATH_TO_CLIENT_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
 	client.TLSConfig.InsecureSkipVerify = true
 	if err != nil {
 		t.Fatal(err)
