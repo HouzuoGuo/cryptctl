@@ -1,5 +1,5 @@
 // +build linux
-// cryptctl - Copyright (c) 2016 SUSE Linux GmbH, Germany
+// cryptctl - Copyright (c) 2017 SUSE Linux GmbH, Germany
 // This source code is licensed under GPL version 3 that can be found in LICENSE file.
 package main
 
@@ -15,7 +15,7 @@ import (
 
 func PrintHelpAndExit(exitStatus int) {
 	fmt.Println(`cryptctl: encrypt and decrypt file systems using network key server.
-Copyright (C) 2016  SUSE Linux GmbH, Germany
+Copyright (C) 2017 SUSE Linux GmbH, Germany
 This program comes with ABSOLUTELY NO WARRANTY.This is free software, and you
 are welcome to redistribute it under certain conditions; see file "LICENSE".
 

@@ -1,3 +1,5 @@
+// cryptctl - Copyright (c) 2017 SUSE Linux GmbH, Germany
+// This source code is licensed under GPL version 3 that can be found in LICENSE file.
 package sys
 
 import "testing"
