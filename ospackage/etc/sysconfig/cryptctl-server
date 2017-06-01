@@ -120,8 +120,9 @@ EMAIL_KEY_RETRIEVAL_GREETING="The key server has given out the following encrypt
 ## Type:    string
 ## Default: ""
 #
-# If key server should act as KMIP proxy, this is the KMIP host name.
-KMIP_SERVER_HOST=""
+# If key server should act as KMIP proxy, this is the KMIP hostname:port list, separated by space.
+# (e.g. host1:port1 host2:port2 ...)
+KMIP_SERVER_ADDRESSES=""
 
 ## Type:    integer
 ## Default: ""

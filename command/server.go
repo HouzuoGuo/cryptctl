@@ -242,8 +242,7 @@ Important notes for client computers:
 	// Walk through KMIP settings
 	useExternalKMIPServer := sys.InputBool("Should encryption keys be kept on a KMIP-compatible key management appliance?")
 	if useExternalKMIPServer {
-		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_HOST, sys.Input(true, "", "KMIP server host name"))
-		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_PORT, sys.InputInt(true, 5696, 1, 65535, "KMIP port number"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_ADDRS, sys.Input(true, "", "Space-separated KMIP server addresses (host1:port1 host2:port2 ...)"))
 		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_USER, sys.Input(false, "", "KMIP username"))
 		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_PASS, sys.InputPassword(false, "", "KMIP password"))
 		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_CA, sys.Input(false, "", "PEM-encoded TLS certificate authority that issued KMIP server certificate"))

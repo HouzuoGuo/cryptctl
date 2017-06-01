@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -43,7 +44,10 @@ func TestKMIP(t *testing.T) {
 	}
 	// Expect server to start in a second
 	time.Sleep(1 * time.Second)
-	client, err := NewKMIPClient("localhost", server.GetPort(), "username-does-not-matter", string(server.PasswordChallenge), caCert,
+	client, err := NewKMIPClient([]string{
+		"bad-server:1234",
+		"localhost:" + strconv.Itoa(server.GetPort()),
+	}, "username-does-not-matter", string(server.PasswordChallenge), caCert,
 		path.Join(PkgInGopath, "keyserv", "rpc_test.crt"), path.Join(PkgInGopath, "keyserv", "rpc_test.key"))
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +118,7 @@ func TestKMIPAgainstPyKMIP(t *testing.T) {
 		time.sleep(100)
 	*/
 	t.Skip("Start PyKMIP server manually and remove this skip statement to run this test case")
-	client, err := NewKMIPClient("127.0.0.1", 5696, "testuser", "testpass", nil, "/etc/pykmip/kmipclient.com.crt", "/etc/pykmip/kmipclient.com.key")
+	client, err := NewKMIPClient([]string{"127.0.0.1:5696"}, "testuser", "testpass", nil, "/etc/pykmip/kmipclient.com.crt", "/etc/pykmip/kmipclient.com.key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +162,7 @@ func TestKMIPAgainstPyKMIP(t *testing.T) {
 
 func TestKMIPAgainstHpeEskm(t *testing.T) {
 	t.Skip("Acquire HPE ESKM credentials and remove this skip statement to run this test case")
-	client, err := NewKMIPClient("SERVER", 5696, "USERNAME", "PASSWORD", nil, "PATH_TO_CRT", "PATH_TO_KEY")
+	client, err := NewKMIPClient([]string{"SERVER:5696"}, "USERNAME", "PASSWORD", nil, "PATH_TO_CRT", "PATH_TO_KEY")
 	if err != nil {
 		t.Fatal(err)
 	}

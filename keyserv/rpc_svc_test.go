@@ -107,6 +107,7 @@ func TestServiceReadFromSysconfig(t *testing.T) {
 		KeyCreationGreeting:  "b",
 		KeyRetrievalSubject:  "c",
 		KeyRetrievalGreeting: "d",
+		KMIPAddresses:        []string{},
 	}) {
 		t.Fatalf("%+v", svcConf)
 	}

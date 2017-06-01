@@ -22,6 +22,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -45,8 +46,7 @@ const (
 	SRV_CONF_MAIL_RETRIEVAL_SUBJ = "EMAIL_KEY_RETRIEVAL_SUBJECT"
 	SRV_CONF_MAIL_RETRIEVAL_TEXT = "EMAIL_KEY_RETRIEVAL_GREETING"
 
-	SRV_CONF_KMIP_SERVER_HOST     = "KMIP_SERVER_HOST"
-	SRV_CONF_KMIP_SERVER_PORT     = "KMIP_SERVER_PORT"
+	SRV_CONF_KMIP_SERVER_ADDRS    = "KMIP_SERVER_ADDRESSES"
 	SRV_CONF_KMIP_SERVER_USER     = "KMIP_SERVER_USER"
 	SRV_CONF_KMIP_SERVER_PASS     = "KMIP_SERVER_PASS"
 	SRV_CONF_KMIP_SERVER_TLS_CA   = "KMIP_CA_PEM"
@@ -103,8 +103,7 @@ type CryptServiceConfig struct {
 	KeyCreationGreeting  string              // greeting of the notification email sent by key creation request
 	KeyRetrievalSubject  string              // subject of the notification email sent by key retrieval request
 	KeyRetrievalGreeting string              // greeting of the notification email sent by key retrieval request
-	KMIPHost             string              // optional KMIP server host
-	KMIPPort             int                 // optional KMIP server port
+	KMIPAddresses        []string            // optional KMIP server addresses (server1:port1 server2:port2 ...)
 	KMIPUser             string              // optional KMIP service access user
 	KMIPPass             string              // optional KMIP service access password
 	KMIPCertAuthorityPEM string              // optional KMIP server CA certificate
@@ -155,8 +154,8 @@ func (conf *CryptServiceConfig) ReadFromSysconfig(sysconf *sys.Sysconfig) error 
 	conf.KeyRetrievalSubject = sysconf.GetString(SRV_CONF_MAIL_RETRIEVAL_SUBJ, "An encrypted file system has been accessed")
 	conf.KeyRetrievalGreeting = sysconf.GetString(SRV_CONF_MAIL_RETRIEVAL_TEXT, "The key server has sent the following encryption key to allow access to its file systems:")
 
-	conf.KMIPHost = sysconf.GetString(SRV_CONF_KMIP_SERVER_HOST, "")
-	conf.KMIPPort = sysconf.GetInt(SRV_CONF_KMIP_SERVER_PORT, 0)
+	conf.KMIPAddresses = sysconf.GetStringArray(SRV_CONF_KMIP_SERVER_ADDRS, []string{})
+
 	conf.KMIPUser = sysconf.GetString(SRV_CONF_KMIP_SERVER_USER, "")
 	conf.KMIPPass = sysconf.GetString(SRV_CONF_KMIP_SERVER_PASS, "")
 	conf.KMIPCertAuthorityPEM = sysconf.GetString(SRV_CONF_KMIP_SERVER_TLS_CA, "")
@@ -223,7 +222,7 @@ Block caller until the listener quits.
 */
 func (srv *CryptServer) ListenRPC() error {
 	var err error
-	if srv.Config.KMIPHost == "" {
+	if len(srv.Config.KMIPAddresses) == 0 {
 		// If RPC server settings do not have KMIP connectivity settings, start my own KMIP server.
 		if srv.BuiltInKMIPServer, err = NewKMIPServer(srv.KeyDB, srv.Config.CertPEM, srv.Config.KeyPEM); err != nil {
 			return err
@@ -234,7 +233,7 @@ func (srv *CryptServer) ListenRPC() error {
 		go srv.BuiltInKMIPServer.HandleConnections()
 		// The client initialisation routine does not immediately connect to server.
 		if srv.KMIPClient, err = NewKMIPClient(
-			"localhost", srv.BuiltInKMIPServer.GetPort(),
+			[]string{"localhost:" + strconv.Itoa(srv.BuiltInKMIPServer.GetPort())},
 			"does-not-matter", string(srv.BuiltInKMIPServer.PasswordChallenge),
 			nil, "", ""); err != nil {
 			return err
@@ -250,7 +249,7 @@ func (srv *CryptServer) ListenRPC() error {
 			}
 		}
 		if srv.KMIPClient, err = NewKMIPClient(
-			srv.Config.KMIPHost, srv.Config.KMIPPort,
+			srv.Config.KMIPAddresses,
 			srv.Config.KMIPUser, srv.Config.KMIPPass,
 			caCert, srv.Config.KMIPCertPEM, srv.Config.KMIPKeyPEM); err != nil {
 			return err

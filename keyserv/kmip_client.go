@@ -14,6 +14,7 @@ import (
 	"io"
 	"log"
 	"reflect"
+	"time"
 )
 
 const (
@@ -24,6 +25,7 @@ const (
 	*/
 	MaxKMIPStructLen   = 65536
 	KMIPAESKeySizeBits = 256 // The only kind of AES encryption key the KMIP server and client will expect to use
+	ClientMaxRetry     = 7   // Maximum number of times for client to retry failed KMIP connection.
 )
 
 /*
@@ -32,8 +34,7 @@ The client is designed to interoperate not only with KMIPServer that comes with 
 KMIP servers implemented by other vendors.
 */
 type KMIPClient struct {
-	ServerHost         string
-	ServerPort         int
+	ServerAddrs        []string
 	Username, Password string
 	TLSConfig          *tls.Config
 }
@@ -42,13 +43,12 @@ type KMIPClient struct {
 Initialise a KMIP client.
 The function does not immediately establish a connection to server.
 */
-func NewKMIPClient(host string, port int, username, password string, caCertPEM []byte, certFilePath, certKeyPath string) (*KMIPClient, error) {
+func NewKMIPClient(addrs []string, username, password string, caCertPEM []byte, certFilePath, certKeyPath string) (*KMIPClient, error) {
 	client := &KMIPClient{
-		ServerHost: host,
-		ServerPort: port,
-		Username:   username,
-		Password:   password,
-		TLSConfig:  new(tls.Config),
+		ServerAddrs: addrs,
+		Username:    username,
+		Password:    password,
+		TLSConfig:   new(tls.Config),
 	}
 	if caCertPEM != nil && len(caCertPEM) > 0 {
 		// Use custom CA
@@ -102,23 +102,49 @@ func ReadFullTTLV(reader io.Reader) (ttlv.Item, error) {
 
 /*
 Establish a TLS connection to server, send exactly one request and expect exactly one response, then close the connection.
+Retry up to a certain number of times in case IO error occurs.
+*/
+func (client *KMIPClient) ConverseWithRetry(request structure.SerialisedItem) (ttlv.Item, error) {
+	var err error
+	serialisedRequest := request.SerialiseToTTLV()
+	encodedRequest := ttlv.EncodeAny(serialisedRequest)
+	for i := 0; i < ClientMaxRetry; i++ {
+		if i > 0 {
+			// Introduce an artificial sleep to delay attempts after failure
+			time.Sleep(1 * time.Second)
+		}
+		// Always prefer to use the first server among the list of servers
+		addr := client.ServerAddrs[i%len(client.ServerAddrs)]
+		conn, err := tls.Dial("tcp", addr, client.TLSConfig)
+		if err != nil {
+			log.Printf("KMIPClient.ConverseWithRetry: IO failure occured with KMIP server %s", addr)
+			continue
+		}
+		if _, err = conn.Write(encodedRequest); err != nil {
+			log.Printf("KMIPClient.ConverseWithRetry: IO failure occured with KMIP server %s", addr)
+			conn.Close()
+			continue
+		}
+		ttlvResp, err := ReadFullTTLV(conn)
+		if err != nil {
+			log.Printf("KMIPClient.ConverseWithRetry: IO failure occured with KMIP server %s", addr)
+			conn.Close()
+			continue
+		}
+		conn.Close()
+		return ttlvResp, nil
+	}
+	return nil, fmt.Errorf("KMIPClient.ConverseWithRetry: ultimately failed in all attempts at conversing with server - %v", err)
+}
+
+/*
+Establish a TLS connection to server, send exactly one request and expect exactly one response, then close the connection.
 TLS handshake is way more expensive than KMIP operations, so consider using the connection for more requests in the future.
 */
 func (client *KMIPClient) MakeRequest(request structure.SerialisedItem) (structure.SerialisedItem, error) {
-	addr := fmt.Sprintf("%s:%d", client.ServerHost, client.ServerPort)
-	conn, err := tls.Dial("tcp", addr, client.TLSConfig)
+	ttlvResp, err := client.ConverseWithRetry(request)
 	if err != nil {
-		return nil, fmt.Errorf("KMIPClient.MakeRequest: connection to \"%s\" failed - %v", addr, err)
-	}
-	defer conn.Close()
-	serialisedRequest := request.SerialiseToTTLV()
-	encodedRequest := ttlv.EncodeAny(serialisedRequest)
-	if _, err = conn.Write(encodedRequest); err != nil {
-		return nil, fmt.Errorf("KMIPClient.MakeRequest: failed to write request - %v", err)
-	}
-	ttlvResp, err := ReadFullTTLV(conn)
-	if err != nil {
-		return nil, fmt.Errorf("KMIPClient.MakeRequest: failed to read response - %v", err)
+		return nil, err
 	}
 	// TODO: refactor this into interface function in all request structures
 	var respItem structure.SerialisedItem
