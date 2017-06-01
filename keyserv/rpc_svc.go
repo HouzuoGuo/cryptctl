@@ -621,11 +621,12 @@ func (rpcConn *CryptServiceConn) EraseKey(req EraseKeyReq, _ *DummyAttr) error {
 		// No need to return error in case key has already disappeared from key server
 		return nil
 	}
-	if err := rpcConn.Svc.KMIPClient.DestroyKey(rec.ID); err != nil {
-		// If KMIP refuses
-		return err
+	kmipErr := rpcConn.Svc.KMIPClient.DestroyKey(rec.ID)
+	dbErr := rpcConn.Svc.KeyDB.Erase(req.UUID)
+	if dbErr == nil && kmipErr != nil {
+		return fmt.Errorf("EraseKey: key tracking record has been erased from database, but KMIP did not erase it - %v", kmipErr)
 	}
-	return rpcConn.Svc.KeyDB.Erase(req.UUID)
+	return dbErr
 }
 
 // Reload key database into memory. This function can only be called from 127.0.0.1. No password is required.

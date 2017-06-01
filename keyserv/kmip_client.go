@@ -287,12 +287,5 @@ func (client *KMIPClient) DestroyKey(id string) (err error) {
 	if err != nil {
 		return
 	}
-	respItem := resp.(*structure.SDestroyResponse).SResponseBatchItem
-	reason := respItem.EResultReason
-	status := respItem.EResultStatus
-	// Not found is not an error
-	if reason.Value == structure.ValResultReasonNotFound || status.Value == structure.ValResultStatusSuccess {
-		return nil
-	}
 	return ResponseItemToError(resp.(*structure.SDestroyResponse).SResponseBatchItem)
 }

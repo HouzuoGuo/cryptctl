@@ -74,8 +74,8 @@ func TestKMIP(t *testing.T) {
 	if err := client.DestroyKey("1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.DestroyKey("does not exist"); err != nil {
-		t.Fatal(err)
+	if err := client.DestroyKey("does not exist"); err == nil {
+		t.Fatal("did not error")
 	}
 	// Expect server to shut down within a second
 	server.Shutdown()
@@ -114,7 +114,7 @@ func TestKMIPAgainstPyKMIP(t *testing.T) {
 		time.sleep(100)
 	*/
 	t.Skip("Start PyKMIP server manually and remove this skip statement to run this test case")
-	client, err := NewKMIPClient("127.0.0.1", 5696, "testuser", "testpass", nil, "/etc/pykmip/client.crt", "/etc/pykmip/client.key")
+	client, err := NewKMIPClient("127.0.0.1", 5696, "testuser", "testpass", nil, "/etc/pykmip/kmipclient.com.crt", "/etc/pykmip/kmipclient.com.key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,18 +145,20 @@ func TestKMIPAgainstPyKMIP(t *testing.T) {
 	if reflect.DeepEqual(received1, received2) || len(received1) == 0 {
 		t.Fatal(hex.Dump(received1), hex.Dump(received2))
 	}
-	// Destroy and retrieve again
 	if err := client.DestroyKey(id1); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.DestroyKey("does not exist"); err != nil {
+	if err := client.DestroyKey(id2); err != nil {
 		t.Fatal(err)
+	}
+	if err := client.DestroyKey("does not exist"); err == nil {
+		t.Fatal("did not error")
 	}
 }
 
 func TestKMIPAgainstHpeEskm(t *testing.T) {
-	//t.Skip("Acquire HPE ESKM credentials and remove this skip statement to run this test case")
-	client, err := NewKMIPClient("hpe.eskm", 5696, "ENTER_USERNAME", "ENTER_PASSWORD", nil, "PATH_TO_CLIENT_CRT", "PATH_TO_CLIENT_KEY")
+	t.Skip("Acquire HPE ESKM credentials and remove this skip statement to run this test case")
+	client, err := NewKMIPClient("SERVER", 5696, "USERNAME", "PASSWORD", nil, "PATH_TO_CRT", "PATH_TO_KEY")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,11 +189,13 @@ func TestKMIPAgainstHpeEskm(t *testing.T) {
 	if reflect.DeepEqual(received1, received2) || len(received1) == 0 {
 		t.Fatal(hex.Dump(received1), hex.Dump(received2))
 	}
-	// Destroy and retrieve again
 	if err := client.DestroyKey(id1); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.DestroyKey("does not exist"); err != nil {
+	if err := client.DestroyKey(id2); err != nil {
 		t.Fatal(err)
+	}
+	if err := client.DestroyKey("does not exist"); err == nil {
+		t.Fatal("did not error")
 	}
 }
