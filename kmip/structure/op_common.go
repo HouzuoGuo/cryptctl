@@ -137,21 +137,29 @@ type SRequestHeader struct {
 
 func (header SRequestHeader) SerialiseToTTLV() ttlv.Item {
 	header.IBatchCount.Tag = TagBatchCount
-	return ttlv.NewStructure(
-		TagRequestHeader,
-		header.SProtocolVersion.SerialiseToTTLV(),
-		header.SAuthentication.SerialiseToTTLV(),
-		&header.IBatchCount)
+	if header.SAuthentication.SCredential.SCredentialValue.TUsername.Value == "" {
+		// Omit authentication header if no username data is given
+		return ttlv.NewStructure(
+			TagRequestHeader,
+			header.SProtocolVersion.SerialiseToTTLV(),
+			&header.IBatchCount)
+	} else {
+		return ttlv.NewStructure(
+			TagRequestHeader,
+			header.SProtocolVersion.SerialiseToTTLV(),
+			header.SAuthentication.SerialiseToTTLV(),
+			&header.IBatchCount)
+	}
 }
 
 func (header *SRequestHeader) DeserialiseFromTTLV(in ttlv.Item) error {
 	if err := DecodeStructItem(in, TagRequestHeader, TagProtocolVersion, &header.SProtocolVersion); err != nil {
 		return err
-	} else if err := DecodeStructItem(in, TagRequestHeader, TagAuthentication, &header.SAuthentication); err != nil {
-		return err
 	} else if err := DecodeStructItem(in, TagRequestHeader, TagBatchCount, &header.IBatchCount); err != nil {
 		return err
 	}
+	// Decode authentication header if it is given
+	DecodeStructItem(in, TagRequestHeader, TagAuthentication, &header.SAuthentication)
 	return nil
 }
 
