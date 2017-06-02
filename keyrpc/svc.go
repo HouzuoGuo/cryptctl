@@ -18,6 +18,7 @@ import (
 	"net/rpc"
 	"os"
 	"path"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -261,9 +262,23 @@ type SaveKeyReq struct {
 	Record   keydb.Record // the new key record
 }
 
+// Make sure that the request attributes are sane.
+func (req SaveKeyReq) Validate() error {
+	if req.Record.UUID == "" {
+		return errors.New("UUID must not be empty")
+	} else if cleanedID := filepath.Clean(req.Record.UUID); cleanedID != req.Record.UUID {
+		return errors.New("Illegal characters appeared in UUID")
+	} else if req.Record.MountPoint == "" {
+		return errors.New("Mount point must not be empty")
+	}
+	return nil
+}
+
 // Save a new key record.
 func (rpcConn *CryptServiceConn) SaveKey(req SaveKeyReq, _ *DummyAttr) error {
 	if err := rpcConn.Svc.ValidatePassword(req.Password); err != nil {
+		return err
+	} else if err := req.Validate(); err != nil {
 		return err
 	}
 	// Input record may not contain empty attributes

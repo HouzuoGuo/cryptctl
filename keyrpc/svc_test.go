@@ -7,8 +7,28 @@ import (
 	"encoding/hex"
 	"path"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestCreateKeyReq_Validate(t *testing.T) {
+	req := SaveKeyReq{}
+	if err := req.Validate(); err == nil || !strings.Contains(err.Error(), "UUID must not be empty") {
+		t.Fatal(err)
+	}
+	req.Record.UUID = "/root/../a-"
+	if err := req.Validate(); err == nil || !strings.Contains(err.Error(), "Illegal chara") {
+		t.Fatal(err)
+	}
+	req.Record.UUID = "abc-def-123-ghi"
+	if err := req.Validate(); err == nil || !strings.Contains(err.Error(), "Mount point") {
+		t.Fatal(err)
+	}
+	req.Record.MountPoint = "/a"
+	if err := req.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestHashPassword(t *testing.T) {
 	salt := [sha512.Size]byte{
