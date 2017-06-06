@@ -115,7 +115,8 @@ func (client *KMIPClient) ConverseWithRetry(request structure.SerialisedItem) (t
 		}
 		// Always prefer to use the first server among the list of servers
 		addr := client.ServerAddrs[i%len(client.ServerAddrs)]
-		conn, err := tls.Dial("tcp", addr, client.TLSConfig)
+		var conn *tls.Conn
+		conn, err = tls.Dial("tcp", addr, client.TLSConfig)
 		if err != nil {
 			log.Printf("KMIPClient.ConverseWithRetry: IO failure occured with KMIP server %s", addr)
 			continue
@@ -125,7 +126,8 @@ func (client *KMIPClient) ConverseWithRetry(request structure.SerialisedItem) (t
 			conn.Close()
 			continue
 		}
-		ttlvResp, err := ReadFullTTLV(conn)
+		var ttlvResp ttlv.Item
+		ttlvResp, err = ReadFullTTLV(conn)
 		if err != nil {
 			log.Printf("KMIPClient.ConverseWithRetry: IO failure occured with KMIP server %s", addr)
 			conn.Close()
