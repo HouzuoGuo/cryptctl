@@ -106,7 +106,7 @@ func InitKeyServer() error {
 	var reconfigure bool
 	if sysconf.GetString(keyserv.SRV_CONF_PASS_HASH, "") != "" {
 		reconfigure = true
-		if !sys.InputBool(`You appear to have already initialised the configuration on this key server.
+		if !sys.InputBool(false, `You appear to have already initialised the configuration on this key server.
 Would you like to re-configure it?`) {
 			fmt.Println("OK, existing configuration is left untouched.")
 			return nil
@@ -219,28 +219,33 @@ Important notes for client computers:
 
 	// Walk through the remaining mandatory configuration keys
 	if listenAddr := sys.Input(false,
-		sysconf.GetString(keyserv.SRV_CONF_LISTEN_ADDR, ""),
+		sysconf.GetString(keyserv.SRV_CONF_LISTEN_ADDR, "0.0.0.0"),
 		"IP address for the server to listen on (0.0.0.0 to listen on all network interfaces)"); listenAddr != "" {
 		sysconf.Set(keyserv.SRV_CONF_LISTEN_ADDR, listenAddr)
 	}
 	if listenPort := sys.InputInt(false,
-		sysconf.GetInt(keyserv.SRV_CONF_LISTEN_PORT, 0), 1, 65535,
+		sysconf.GetInt(keyserv.SRV_CONF_LISTEN_PORT, 3737), 1, 65535,
 		"TCP port number to listen on"); listenPort != 0 {
 		sysconf.Set(keyserv.SRV_CONF_LISTEN_PORT, listenPort)
 	}
 	if keyDBDir := sys.InputAbsFilePath(true,
-		sysconf.GetString(keyserv.SRV_CONF_KEYDB_DIR, ""),
+		sysconf.GetString(keyserv.SRV_CONF_KEYDB_DIR, "/var/lib/cryptctl/keydb"),
 		"Key database directory"); keyDBDir != "" {
 		sysconf.Set(keyserv.SRV_CONF_KEYDB_DIR, keyDBDir)
 	}
 	// Walk through client certificate verification settings
-	validateClient := sys.InputBool("Should clients present their certificate in order to access this server?")
+	validateClient := sys.InputBool(sysconf.GetString(keyserv.SRV_CONF_TLS_CA, "") != "",
+		"Should clients present their certificate in order to access this server?")
 	sysconf.Set(keyserv.SRV_CONF_TLS_VALIDATE_CLIENT, validateClient)
 	if validateClient {
-		sysconf.Set(keyserv.SRV_CONF_TLS_CA, sys.Input(true, "", "PEM-encoded TLS certificate authority that will issue client certificates"))
+		sysconf.Set(keyserv.SRV_CONF_TLS_CA,
+			sys.Input(true,
+				sysconf.GetString(keyserv.SRV_CONF_TLS_CA, ""),
+				"PEM-encoded TLS certificate authority that will issue client certificates"))
 	}
 	// Walk through KMIP settings
-	useExternalKMIPServer := sys.InputBool("Should encryption keys be kept on a KMIP-compatible key management appliance?")
+	useExternalKMIPServer := sys.InputBool(sysconf.GetString(keyserv.SRV_CONF_KMIP_SERVER_ADDRS, "") != "",
+		"Should encryption keys be kept on a KMIP-compatible key management appliance?")
 	if useExternalKMIPServer {
 		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_ADDRS, sys.Input(true, "", "Space-separated KMIP server addresses (host1:port1 host2:port2 ...)"))
 		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_USER, sys.Input(false, "", "KMIP username"))
@@ -305,9 +310,9 @@ Important notes for client computers:
 	fmt.Println("\nSettings have been saved successfully!")
 	var start bool
 	if sys.SystemctlIsRunning(SERVER_DAEMON) {
-		start = sys.InputBool("Would you like to restart key server (%s) to apply the new settings?", SERVER_DAEMON)
+		start = sys.InputBool(true, "Would you like to restart key server (%s) to apply the new settings?", SERVER_DAEMON)
 	} else {
-		start = sys.InputBool("Would you like to start key server (%s) now?", SERVER_DAEMON)
+		start = sys.InputBool(true, "Would you like to start key server (%s) now?", SERVER_DAEMON)
 	}
 	if !start {
 		return nil

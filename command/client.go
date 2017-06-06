@@ -102,7 +102,7 @@ func EncryptFS() error {
 	}
 	storedHost := sysconf.GetString(keyserv.CLIENT_CONF_HOST, "")
 	if storedHost != "" && host != storedHost {
-		if !sys.InputBool(MSG_ASK_DIFF_HOST, storedHost, host) {
+		if !sys.InputBool(false, MSG_ASK_DIFF_HOST, storedHost, host) {
 			return errors.New(MSG_E_CANCELLED)
 		}
 	}
@@ -138,7 +138,7 @@ func EncryptFS() error {
 
 	// Prompt user for confirmation and then proceed
 	fmt.Printf(MSG_ENC_SEQUENCE, encDisk, srcDir)
-	if !sys.InputBool(MSG_ASK_PROCEED) {
+	if !sys.InputBool(false, MSG_ASK_PROCEED) {
 		return errors.New(MSG_E_CANCELLED)
 	}
 	// Alive-report interval is hard coded for now until there is a very good reason to change it

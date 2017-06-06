@@ -93,14 +93,14 @@ func InputInt(mandatory bool, defaultHint, lowerLimit, upperLimit int, format st
 }
 
 // Print a prompt in stdout and return a boolean value read from stdin.
-func InputBool(format string, values ...interface{}) bool {
-	fmt.Printf(format+": ", values...)
+func InputBool(defaultHint bool, format string, values ...interface{}) bool {
+	defaultStr := "yes"
+	if !defaultHint {
+		defaultStr = "no"
+	}
 	for {
-		str, err := bufio.NewReader(os.Stdin).ReadString('\n')
-		if err != nil {
-			log.Panicf("Input: failed to read from stadard input - %v", err)
-		}
-		switch strings.TrimSpace(strings.ToLower(str)) {
+		answer := Input(false, defaultStr, format, values...)
+		switch strings.TrimSpace(strings.ToLower(answer)) {
 		case "y":
 			fallthrough
 		case "yes":
@@ -113,6 +113,8 @@ func InputBool(format string, values ...interface{}) bool {
 			fallthrough
 		case "nein":
 			return false
+		case "":
+			return defaultHint
 		default:
 			fmt.Print("Please enter \"yes\" or \"no\": ")
 			os.Stdout.Sync()
@@ -126,7 +128,7 @@ func InputAbsFilePath(mandatory bool, defaultHint string, format string, values 
 	for {
 		val := Input(mandatory, defaultHint, format, values...)
 		if val == "" {
-			return val
+			return defaultHint
 		}
 		if val[0] != '/' {
 			fmt.Println("Please enter an absolute path led by a slash.")
