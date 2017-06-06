@@ -59,9 +59,11 @@ the key; if the upper limit number of computers is reached, the key will no long
 administrator can always retrieve encryption keys by using key server's access password.
 
 .I cryptctl
-can utilise an external key management appliance that understands KMIP v1.3 to store the actual encryption keys. The server
-setup sequence asks the system administrator for KMIP connectivity details such as host name, port, certificate, and user
-credentials. Of course cryptctl functions perfectly well without using an external key management appliance.
+can optionally utilise an external key management appliance that understands KMIP v1.3 to store the actual disk encryption keys.
+Should you choose to use the external appliance, you may enter KMIP connectivity details such as host name, port, certificate,
+and user credentials during server initialisation sequence. If you do not wish to use the external appliance,
+.I cryptctl
+will store encryption keys in its own database.
 
 .SH KEY SERVER ACTIONS
 .SS
@@ -123,7 +125,8 @@ In normal circumstances, encryption keys are retrieved via network communication
 unavailable or the communication be cut off, already unlocked file systems will remain mounted, however locked file
 systems will not be able to retrieve encryption keys from the key server. Hence, this manual procedure has been
 designed to allow unlocking of encrypted disks directly from key database record, via physical access to both the key
-server and client computer. This procedure will not trigger Email notification or track key usage.
+server and client computer. This procedure is not applicable should you have used an external KMIP appliance to store
+encryption keys, nor will it trigger Email notification or track key usage.
 
 .nr step 1 1
 .IP \n[step]
@@ -156,11 +159,26 @@ the client using the self-signed certificate, transfer the certificate file to c
 to every operation:
     -ca=/path/to/testing.crt
 
-If you wish to maintain a certificate infrastructure for multiple key servers in a production environment, the YaST
-Certificate Management program may come in handy.
+By default, the key server accepts encryption requests from all password-authenticated clients, and hands out encryption
+keys to all clients that request keys for a valid disk UUID. If you wish to further strengthen verification on client
+identity, you may enter an authority certificate file during server's initialisation sequence, from there all clients must
+present valid certificate issued by the specified CA in order to contact the key server.
 
-The server can optionally enforce verification of clients' certificate, should you decide to let server verify clients'
-identity before serving them encryption keys. The behaviour is setup during server's and client's setup sequence.
+In order to build a public key infrastructure to issue server and client certificates, consider using lightweight tools
+ such as "easy-rsa" by OpenVPN, or YaST Certificate Management program.
+
+.SH ON USING EXTERNAL KMIP SERVER APPLIANCE
+By default, the key server stores all disk encryption keys along with key usage tracking data in a built-in database. If
+you decide to use an external KMIP server appliance to store and manage disk encryption keys, you may enter its connectivity
+details during server's initialisation sequence. You must make the decision on whether to use external KMIP server before
+any disk is encrypted using the key server, and you may not change the settings (e.g. turn off KMIP and use built-in
+database again) once a disk has been encrypted.
+
+.I cryptctl
+performs strong verification on all TLS certificates. When it acts as a KMIP client, it verifies the common name of KMIP
+server against the certificate presented by it, along with other checks such as validity date. Should any certificate
+verification error occur, cryptctl will report back with the error reason and temporarily cease conversation with the KMIP
+server.
 
 .SH CHANGE/REVOKE OR DELETE ENCRYPTION KEY
 If you decide to revoke or change encryption key for an encrypted file system, please back up the encrypted data onto a
@@ -168,8 +186,8 @@ disk and re-run the encryption routine in order to encrypt with a new key. The u
 revoke or change encryption key.
 
 Destroy an encryption key will render an encrypted file system irreversibly lost, execute "cryptctl erase" on the client
-computer and enter the file system UUID will proceed to erase metadata of the encrypted file system, and then contact
-key server to erase its encryption record as well.
+computer and enter the file system UUID will erase the key tracking record from key server, the key content from KMIP server
+(if used), and the metadata of encrypted file system.
 
 .SH FILES
 .NF
