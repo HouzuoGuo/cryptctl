@@ -160,3 +160,10 @@ KMIP_TLS_CERT_PEM=""
 # If key server should act as KMIP proxy, this is the KMIP client certificate key.
 KMIP_TLS_CERT_KEY_PEM=""
 
+## Type:    boolean
+## Default: "yes"
+#
+# For security reasons, you are strongly recommended to leave the setting at its default "yes".
+# If set to "no", cryptctl server will reduce its security measures by not verifying KMIP server's TLS certificate.
+# Remember to restart cryptctl-server.service after changing any value of this file.
+KMIP_TLS_DO_VERIFY="yes"

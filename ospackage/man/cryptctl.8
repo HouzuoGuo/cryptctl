@@ -174,11 +174,17 @@ details during server's initialisation sequence. You must make the decision on w
 any disk is encrypted using the key server, and you may not change the settings (e.g. turn off KMIP and use built-in
 database again) once a disk has been encrypted.
 
+By default,
 .I cryptctl
 performs strong verification on all TLS certificates. When it acts as a KMIP client, it verifies the common name of KMIP
 server against the certificate presented by it, along with other checks such as validity date. Should any certificate
 verification error occur, cryptctl will report back with the error reason and temporarily cease conversation with the KMIP
-server.
+server. It is strongly recommended to leave certificate verification enabled.
+
+However, should you wish not to verify KMIP server certificate, you may turn it off by editing server configuration file
+.I /etc/sysconfig/cryptctl-server
+, find key "KMIP_TLS_DO_VERIFY" and change its value to "no", then restart cryptctl-server.service. Turning off the
+verification opens up the risk of leaking disk encryption keys to eavesdroppers.
 
 .SH CHANGE/REVOKE OR DELETE ENCRYPTION KEY
 If you decide to revoke or change encryption key for an encrypted file system, please back up the encrypted data onto a

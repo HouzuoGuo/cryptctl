@@ -49,6 +49,7 @@ const (
 	SRV_CONF_KMIP_SERVER_ADDRS    = "KMIP_SERVER_ADDRESSES"
 	SRV_CONF_KMIP_SERVER_USER     = "KMIP_SERVER_USER"
 	SRV_CONF_KMIP_SERVER_PASS     = "KMIP_SERVER_PASS"
+	SRV_CONF_KMIP_TLS_DO_VERIFY   = "KMIP_TLS_DO_VERIFY"
 	SRV_CONF_KMIP_SERVER_TLS_CA   = "KMIP_CA_PEM"
 	SRV_CONF_KMIP_SERVER_TLS_CERT = "KMIP_TLS_CERT_PEM"
 	SRV_CONF_KMIP_SERVER_TLS_KEY  = "KMIP_TLS_CERT_KEY_PEM"
@@ -107,6 +108,7 @@ type CryptServiceConfig struct {
 	KMIPUser             string              // optional KMIP service access user
 	KMIPPass             string              // optional KMIP service access password
 	KMIPCertAuthorityPEM string              // optional KMIP server CA certificate
+	KMIPTLSDoVerify      bool                // Enable verification on KMIP server's TLS certificate
 	KMIPCertPEM          string              // optional KMIP client certificate
 	KMIPKeyPEM           string              // optional KMIP client certificate key
 }
@@ -155,10 +157,10 @@ func (conf *CryptServiceConfig) ReadFromSysconfig(sysconf *sys.Sysconfig) error 
 	conf.KeyRetrievalGreeting = sysconf.GetString(SRV_CONF_MAIL_RETRIEVAL_TEXT, "The key server has sent the following encryption key to allow access to its file systems:")
 
 	conf.KMIPAddresses = sysconf.GetStringArray(SRV_CONF_KMIP_SERVER_ADDRS, []string{})
-
 	conf.KMIPUser = sysconf.GetString(SRV_CONF_KMIP_SERVER_USER, "")
 	conf.KMIPPass = sysconf.GetString(SRV_CONF_KMIP_SERVER_PASS, "")
 	conf.KMIPCertAuthorityPEM = sysconf.GetString(SRV_CONF_KMIP_SERVER_TLS_CA, "")
+	conf.KMIPTLSDoVerify = sysconf.GetBool(SRV_CONF_KMIP_TLS_DO_VERIFY, true)
 	conf.KMIPCertPEM = sysconf.GetString(SRV_CONF_KMIP_SERVER_TLS_CERT, "")
 	conf.KMIPKeyPEM = sysconf.GetString(SRV_CONF_KMIP_SERVER_TLS_KEY, "")
 	return conf.Validate()
@@ -253,6 +255,10 @@ func (srv *CryptServer) ListenRPC() error {
 			srv.Config.KMIPUser, srv.Config.KMIPPass,
 			caCert, srv.Config.KMIPCertPEM, srv.Config.KMIPKeyPEM); err != nil {
 			return err
+		}
+		if !srv.Config.KMIPTLSDoVerify {
+			log.Printf("CryptServer.ListenRPC: KMIP client will not verify KMIP server's identity, as instructed by configuration.")
+			srv.KMIPClient.TLSConfig.InsecureSkipVerify = !srv.Config.KMIPTLSDoVerify
 		}
 	}
 	// Start ordinary RPC server

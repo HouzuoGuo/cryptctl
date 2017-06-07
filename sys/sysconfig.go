@@ -187,7 +187,7 @@ func (conf *Sysconfig) GetBool(key string, defaultValue bool) bool {
 		defaultValStr = "yes"
 	}
 	value := strings.ToLower(conf.GetString(key, defaultValStr))
-	return (value == "yes" || value == "true")
+	return value == "yes" || value == "true"
 }
 
 // Convert key-value pairs back into text. Values are always surrounded by double-quotes.

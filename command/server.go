@@ -239,7 +239,7 @@ Important notes for client computers:
 	sysconf.Set(keyserv.SRV_CONF_TLS_VALIDATE_CLIENT, validateClient)
 	if validateClient {
 		sysconf.Set(keyserv.SRV_CONF_TLS_CA,
-			sys.Input(true,
+			sys.InputAbsFilePath(true,
 				sysconf.GetString(keyserv.SRV_CONF_TLS_CA, ""),
 				"PEM-encoded TLS certificate authority that will issue client certificates"))
 	}
@@ -250,9 +250,9 @@ Important notes for client computers:
 		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_ADDRS, sys.Input(true, "", "Space-separated KMIP server addresses (host1:port1 host2:port2 ...)"))
 		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_USER, sys.Input(false, "", "KMIP username"))
 		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_PASS, sys.InputPassword(false, "", "KMIP password"))
-		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_CA, sys.Input(false, "", "PEM-encoded TLS certificate authority that issued KMIP server certificate"))
-		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_CERT, sys.Input(false, "", "PEM-encoded TLS client identitiy certificate"))
-		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_KEY, sys.Input(false, "", "PEM-encoded TLS client identitiy certificate key"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_CA, sys.InputAbsFilePath(false, "", "PEM-encoded TLS certificate authority of KMIP server"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_CERT, sys.InputAbsFilePath(false, "", "PEM-encoded TLS client identity certificate"))
+		sysconf.Set(keyserv.SRV_CONF_KMIP_SERVER_TLS_KEY, sys.InputAbsFilePath(false, "", "PEM-encoded TLS client identity certificate key"))
 	}
 	// Walk through optional email settings
 	fmt.Println("\nTo enable Email notifications, enter the following parameters:")
