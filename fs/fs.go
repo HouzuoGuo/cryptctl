@@ -3,6 +3,7 @@
 package fs
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/HouzuoGuo/cryptctl/sys"
 	"os"
@@ -25,11 +26,13 @@ var lsblkFields = regexp.MustCompile(`"((?:\\"|[^"])*)"`) // extract values from
 // Represent a block device currently detected on the system.
 type BlockDevice struct {
 	UUID       string
+	Name       string // Name is the device node name
 	Path       string // full path to the device node under /dev including the prefix
 	Type       string // device type can be: partition, disk, encrypted, etc..
 	FileSystem string
 	MountPoint string
 	SizeByte   int64
+	PKName     string // PKName is the underlying block device's node name of a crypt block device
 }
 
 // Return true if the block device is LUKS encrypted.
@@ -41,13 +44,15 @@ func (blkDev BlockDevice) IsLUKSEncrypted() bool {
 type BlockDevices []BlockDevice
 
 // Find the first block device that satisfies the given criteria. If a criteria is empty, it is ignored.
-func (blkDevs BlockDevices) GetByCriteria(uuid, devPath, devType, fileSystem, mountPoint string) (BlockDevice, bool) {
+func (blkDevs BlockDevices) GetByCriteria(uuid, devPath, devType, fileSystem, mountPoint, pkName, name string) (BlockDevice, bool) {
 	for _, blkDev := range blkDevs {
 		if (uuid == "" || blkDev.UUID == uuid) &&
 			(devPath == "" || blkDev.Path == devPath) &&
 			(devType == "" || blkDev.Type == devType) &&
 			(fileSystem == "" || blkDev.FileSystem == fileSystem) &&
-			(mountPoint == "" || blkDev.MountPoint == mountPoint) {
+			(mountPoint == "" || blkDev.MountPoint == mountPoint) &&
+			(pkName == "" || blkDev.PKName == pkName) &&
+			(name == "" || blkDev.Name == name) {
 			return blkDev, true
 		}
 	}
@@ -63,7 +68,7 @@ func ParseBlockDevs(txt string) BlockDevices {
 	ret := make([]BlockDevice, 0, 8)
 	for _, line := range strings.Split(txt, "\n") {
 		fields := lsblkFields.FindAllString(line, -1)
-		if len(fields) != 6 {
+		if len(fields) < 7 {
 			continue // skip empty lines
 		}
 		// Remove surrounding quotes from match
@@ -77,10 +82,12 @@ func ParseBlockDevs(txt string) BlockDevices {
 		}
 		blkDev := BlockDevice{
 			UUID:       fields[0],
+			Name:       fields[1],
 			Path:       devPath,
 			Type:       devType,
 			FileSystem: fields[3],
 			MountPoint: fields[4],
+			PKName:     fields[6],
 		}
 		// Block device size can be empty
 		if fields[5] != "" {
@@ -104,7 +111,7 @@ func GetBlockDevices() BlockDevices {
 
 		The parser reads NAME instead of KNAME because KNAME does not apply for names under /dev/mapper.
 	*/
-	_, stdout, stderr, err := sys.Exec(nil, nil, nil, BIN_LSBLK, "-P", "-b", "-o", "UUID,NAME,TYPE,FSTYPE,MOUNTPOINT,SIZE")
+	_, stdout, stderr, err := sys.Exec(nil, nil, nil, BIN_LSBLK, "-P", "-b", "-o", "UUID,NAME,TYPE,FSTYPE,MOUNTPOINT,SIZE,PKNAME")
 	if err != nil {
 		panic(fmt.Errorf("GetBlockDevices: failed to execute lsblk - %v %s %s", err, stdout, stderr))
 	}
@@ -122,7 +129,7 @@ func GetBlockDevice(node string) (blkDev BlockDevice, found bool) {
 		-b - block device size is in bytes.
 		-o - choose output columns.
 	*/
-	_, stdout, _, _ := sys.Exec(nil, nil, nil, BIN_LSBLK, "-P", "-b", "-o", "UUID,NAME,TYPE,FSTYPE,MOUNTPOINT,SIZE", node)
+	_, stdout, _, _ := sys.Exec(nil, nil, nil, BIN_LSBLK, "-P", "-b", "-o", "UUID,NAME,TYPE,FSTYPE,MOUNTPOINT,SIZE,PKNAME", node)
 	blkDevs := ParseBlockDevs(stdout)
 	found = len(blkDevs) > 0
 	if found {
@@ -180,12 +187,32 @@ func Mount(blockDev, fsType string, fsOptions []string, mountPoint string) error
 	return nil
 }
 
-// Call umount.
-func Umount(mountPoint string) error {
-	if out, err := exec.Command(BIN_UMOUNT, mountPoint).CombinedOutput(); err != nil {
-		return fmt.Errorf("Umount: failed to unmount \"%s\" - %v %s", mountPoint, err, out)
+// GetSystemdMountNameForDir returns systemd's mount unit associated with the directory, supposedly a mount point.
+func GetSystemdMountNameForDir(dirPath string) string {
+	var ret bytes.Buffer
+	for i, ch := range dirPath {
+		if i == 0 && ch == '/' {
+			continue
+		} else if ch == '/' {
+			ret.WriteRune('-')
+		} else if ch >= 48 && ch <= 57 || ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122 {
+			ret.WriteRune(ch)
+		} else {
+			ret.WriteString(fmt.Sprintf("\\x%x", ch))
+		}
 	}
-	return nil
+	return ret.String() + ".mount"
+}
+
+// Umount un-mounts a file system by interacting with systemd.
+func Umount(mountPoint string) error {
+	err1 := sys.SystemctlStop(GetSystemdMountNameForDir(mountPoint))
+	out, err2 := exec.Command(BIN_UMOUNT, mountPoint).CombinedOutput()
+	devs := GetBlockDevices()
+	if _, found := devs.GetByCriteria("", "", "", "", mountPoint, "", ""); !found {
+		return nil
+	}
+	return fmt.Errorf("Umount: first attempt failed with error \"%v\", and second attempt failed with output \"%s\" and error \"%v\"", err1, out, err2)
 }
 
 // Return amount of free space available on the disk where input paths is mounted on.

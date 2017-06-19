@@ -26,9 +26,15 @@ const (
 	SERVER_GENTLS_PATH = "/etc/cryptctl/servertls"
 	TIME_OUTPUT_FORMAT = "2006-01-02 15:04:05"
 	MIN_PASSWORD_LEN   = 10
+
+	PendingCommandMount  = "mount"  // PendingCommandMount is the content of a pending command that tells client computer to mount that disk.
+	PendingCommandUmount = "umount" // PendingCommandUmount is the content of a pending command that tells client computer to umount that disk.
 )
 
-// Interactively read server password from terminal, then use the password to ping RPC server.
+/*
+ConnectToKeyServer establishes a TCP connection to key server by interactively reading password from terminal,
+and then ping server via TCP to check connectivity and password. Returns initialised client.
+*/
 func ConnectToKeyServer(caFile, certFile, keyFile, keyServer string) (client *keyserv.CryptClient, password string, err error) {
 	sys.LockMem()
 	serverAddr := keyServer
@@ -52,7 +58,7 @@ func ConnectToKeyServer(caFile, certFile, keyFile, keyServer string) (client *ke
 		customCA = caFileContent
 	}
 	// Initialise client and test connectivity with the server
-	client, err = keyserv.NewCryptClient(serverAddr, port, customCA, certFile, keyFile)
+	client, err = keyserv.NewCryptClient("tcp", fmt.Sprintf("%s:%d", serverAddr, port), customCA, certFile, keyFile)
 	if err != nil {
 		return nil, "", err
 	}
@@ -76,7 +82,7 @@ func OpenKeyDB(recordUUID string) (*keydb.DB, error) {
 	sys.LockMem()
 	sysconf, err := sys.ParseSysconfigFile(SERVER_CONFIG_PATH, true)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to read configuratioon file \"%s\" - %v", SERVER_CONFIG_PATH, err)
+		return nil, fmt.Errorf("OpenKeyDB: failed to determine database path from configuration file \"%s\" - %v", SERVER_CONFIG_PATH, err)
 	}
 	dbDir := sysconf.GetString(keyserv.SRV_CONF_KEYDB_DIR, "")
 	if dbDir == "" {
@@ -84,12 +90,17 @@ func OpenKeyDB(recordUUID string) (*keydb.DB, error) {
 	}
 	var db *keydb.DB
 	if recordUUID == "" {
+		// Load entire directory of database records into memory
 		db, err = keydb.OpenDB(dbDir)
+		if err != nil {
+			return nil, fmt.Errorf("OpenKeyDB: failed to open database directory \"%s\" - %v", dbDir, err)
+		}
 	} else {
+		// Load only one record into memory
 		db, err = keydb.OpenDBOneRecord(dbDir, recordUUID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("Failed to open key database \"%s\" - %v", dbDir, err)
+		if err != nil {
+			return nil, fmt.Errorf("OpenKeyDB: failed to open record \"%s\" - %v", recordUUID, err)
+		}
 	}
 	return db, nil
 }
@@ -370,16 +381,21 @@ func KeyRPCDaemon() error {
 		log.Printf("Email notifications are not enabled: %v", nonFatalErr)
 	}
 	log.Printf("GOMAXPROCS is currently: %d", runtime.GOMAXPROCS(-1))
-	// Start the server loop, which will block until the server quits.
-	if err := srv.ListenRPC(); err != nil {
-		return fmt.Errorf("Failed to listen for connections: %v", err)
+	// Start two RPC servers, one on TCP and the other on Unix domain socket.
+	if err := srv.ListenTCP(); err != nil {
+		return fmt.Errorf("KeyRPCDaemon: failed to listen for TCP connections - %v", err)
 	}
-	srv.HandleConnections() // intentionally block here
+	if err := srv.ListenUnix(); err != nil {
+		return fmt.Errorf("KeyRPCDaemon: failed to listen for domain socket connections - %v", err)
+	}
+	go srv.HandleUnixConnections()
+	srv.HandleTCPConnections() // intentionally block here
 	return nil
 }
 
 // Server - print all key records sorted according to last access.
 func ListKeys() error {
+	sys.LockMem()
 	db, err := OpenKeyDB("")
 	if err != nil {
 		return err
@@ -401,11 +417,15 @@ func ListKeys() error {
 
 // Server - let user edit key details such as mount point and mount options
 func EditKey(uuid string) error {
+	sys.LockMem()
 	db, err := OpenKeyDB(uuid)
 	if err != nil {
 		return err
 	}
-	rec := db.RecordsByUUID[uuid]
+	rec, found := db.GetByUUID(uuid)
+	if !found {
+		return fmt.Errorf("Cannot find record for UUID %s", uuid)
+	}
 	// Similar to the encryption routine, ask user all the configuration questions.
 	newMountPoint := sys.Input(false, rec.MountPoint, "Mount point")
 	if newMountPoint != "" {
@@ -429,7 +449,7 @@ func EditKey(uuid string) error {
 	}
 	// Write record file and restart server to let it reload all records into memory
 	if _, err := db.Upsert(rec); err != nil {
-		return fmt.Errorf("Failed to update record - %v", err)
+		return fmt.Errorf("Failed to update database record - %v", err)
 	}
 	fmt.Println("Record has been updated successfully.")
 	if sys.SystemctlIsRunning(SERVER_DAEMON) {
@@ -444,11 +464,15 @@ func EditKey(uuid string) error {
 
 // Server - show key record details but hide key content
 func ShowKey(uuid string) error {
+	sys.LockMem()
 	db, err := OpenKeyDB(uuid)
 	if err != nil {
 		return err
 	}
-	rec := db.RecordsByUUID[uuid]
+	rec, found := db.GetByUUID(uuid)
+	if !found {
+		return fmt.Errorf("Cannot find record for UUID %s", uuid)
+	}
 	rec.RemoveDeadHosts()
 	fmt.Printf("%-34s%s\n", "UUID", rec.UUID)
 	fmt.Printf("%-34s%s\n", "Mount Point", rec.MountPoint)
@@ -468,5 +492,105 @@ func ShowKey(uuid string) error {
 			}
 		}
 	}
+	fmt.Printf("%-34s%d\n", "Pending Commands", len(rec.PendingCommands))
+	if len(rec.PendingCommands) > 0 {
+		for ip, cmds := range rec.PendingCommands {
+			for _, cmd := range cmds {
+				validFromStr := cmd.ValidFrom.Format(TIME_OUTPUT_FORMAT)
+				validTillStr := cmd.ValidFrom.Add(cmd.Validity).Format(TIME_OUTPUT_FORMAT)
+				fmt.Printf("%45s\tValidFrom=\"%s\"\tValidTo=\"%s\"\tContent=\"%v\"\tFetched? %v\tResult=\"%v\"\n",
+					ip, validFromStr, validTillStr, cmd.Content, cmd.SeenByClient, cmd.ClientResult)
+			}
+		}
+	}
+
+	return nil
+}
+
+// SendCommand is a server routine that saves a new pending command to database record.
+func SendCommand() error {
+	sys.LockMem()
+	client, err := keyserv.NewCryptClient("unix", keyserv.DomainSocketFile, nil, "", "")
+	if err != nil {
+		return err
+	}
+	password := sys.InputPassword(true, "", "Enter key server's password (no echo)")
+	// Test the connection and password
+	salt, err := client.GetSalt()
+	if err != nil {
+		return err
+	}
+	if err := client.Ping(keyserv.PingRequest{Password: keyserv.HashPassword(salt, password)}); err != nil {
+		return err
+	}
+	// Interactively gather pending command details
+	uuid := sys.Input(true, "", "What is the UUID of disk affected by this command?")
+	db, err := OpenKeyDB(uuid)
+	if err != nil {
+		return err
+	}
+	ip := sys.Input(true, "", "What is the IP address of computer who will receive this command?")
+	var cmd string
+	for {
+		if cmd = sys.Input(false, "umount", "What should the computer do? (%s|%s)", PendingCommandMount, PendingCommandUmount); cmd == "" {
+			cmd = "umount" // default action is "umount"
+		}
+		if cmd == PendingCommandUmount {
+			break
+		} else if cmd == PendingCommandMount {
+			break
+		} else {
+			continue
+		}
+	}
+	expireMin := sys.InputInt(true, 10, 1, 10080, "In how many minutes does the command expire (including the result)?")
+	// Place the new pending command into database record
+	rec, _ := db.GetByUUID(uuid)
+	rec.RemoveDeadHosts()
+	rec.RemoveExpiredPendingCommands()
+	rec.AddPendingCommand(ip, keydb.PendingCommand{
+		ValidFrom: time.Now(),
+		Validity:  time.Duration(expireMin) * time.Minute,
+		Content:   cmd,
+	})
+	if _, err := db.Upsert(rec); err != nil {
+		return fmt.Errorf("Failed to update database record - %v", err)
+	}
+	// Ask server to reload the record from disk
+	client.ReloadRecord(keyserv.ReloadRecordReq{Password: keyserv.HashPassword(salt, password), UUID: uuid})
+	fmt.Printf("All done! Computer %s will be informed of the command when it comes online and polls from this server.\n", ip)
+	return nil
+}
+
+// ClearPendingCommands is a server routine that clears all pending commands in a database record.
+func ClearPendingCommands() error {
+	sys.LockMem()
+	client, err := keyserv.NewCryptClient("unix", keyserv.DomainSocketFile, nil, "", "")
+	if err != nil {
+		return err
+	}
+	password := sys.InputPassword(true, "", "Enter key server's password (no echo)")
+	// Test the connection and password
+	salt, err := client.GetSalt()
+	if err != nil {
+		return err
+	}
+	if err := client.Ping(keyserv.PingRequest{Password: keyserv.HashPassword(salt, password)}); err != nil {
+		return err
+	}
+	uuid := sys.Input(true, "", "What is the UUID of disk to be cleared of pending commands?")
+	db, err := OpenKeyDB(uuid)
+	if err != nil {
+		return err
+	}
+	rec, _ := db.GetByUUID(uuid)
+	rec.RemoveDeadHosts()
+	rec.ClearPendingCommands()
+	if _, err := db.Upsert(rec); err != nil {
+		return fmt.Errorf("Failed to update database record - %v", err)
+	}
+	// Ask server to reload the record from disk
+	client.ReloadRecord(keyserv.ReloadRecordReq{Password: keyserv.HashPassword(salt, password), UUID: uuid})
+	fmt.Printf("All of %s's pending commands have been successfully cleared.\n", uuid)
 	return nil
 }

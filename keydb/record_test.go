@@ -371,3 +371,48 @@ func TestRecord(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+
+func TestRecord_RemoveExpiredPendingCommands(t *testing.T) {
+	rec := Record{
+		UUID:         "testuuid",
+		ID:           "testid",
+		Key:          []byte{0, 1, 2, 3},
+		MountPoint:   "/tmp/a",
+		MountOptions: []string{"rw", "noatime"},
+		LastRetrieval: AliveMessage{
+			Hostname:  "host1",
+			IP:        "ip1",
+			Timestamp: 123456,
+		},
+		MaxActive:        2,
+		AliveIntervalSec: 1,
+		AliveCount:       4,
+		PendingCommands:  make(map[string][]PendingCommand),
+	}
+	rec.AddPendingCommand("1.1.1.1", PendingCommand{
+		// Expired right away
+		ValidFrom: time.Now().Add(-1 * time.Second),
+		Validity:  1 * time.Second,
+	})
+	rec.AddPendingCommand("1.1.1.1", PendingCommand{
+		// Expiring in a minute
+		ValidFrom: time.Now(),
+		Validity:  1 * time.Minute,
+	})
+	rec.AddPendingCommand("1.1.1.1", PendingCommand{
+		// Not expiring anytime soon
+		ValidFrom: time.Now(),
+		Validity:  1 * time.Hour,
+	})
+	rec.AddPendingCommand("2.2.2.2", PendingCommand{
+		// Expired right away
+		ValidFrom: time.Now().Add(-1 * time.Second),
+		Validity:  1 * time.Second,
+	})
+	rec.RemoveExpiredPendingCommands()
+	// 1.1.1.1 has one command remaining
+	// 2.2.2.2 is removed because there are no more commands in history
+	if len(rec.PendingCommands) != 1 || len(rec.PendingCommands["1.1.1.1"]) != 2 {
+		t.Fatalf("%+v", rec.PendingCommands)
+	}
+}

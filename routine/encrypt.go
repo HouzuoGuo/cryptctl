@@ -35,7 +35,6 @@ const (
 	MSG_STEP_1                    = "\n1. Completely erase disk \"%s\" and install encryption key on it.\n"
 	MSG_STEP_2                    = "\n2. Copy data from \"%s\" into the disk.\n"
 	MSG_STEP_3                    = "\n3. Announce the encrypted disk to key server \"%s\".\n"
-	MSG_E_NO_RAND                 = "Failed to generate encryption key - %v"
 	MSG_E_MKDIR                   = "Failed to make directory \"%s\" - %v"
 	MSG_E_RENAME_DIR              = "Failed to rename directory \"%s\" into \"%s\" - %v"
 	MSG_E_NO_DEV_INFO             = "Failed to retrieve block device information of \"%s\""
@@ -100,7 +99,7 @@ func EncryptFSPreCheck(srcDir, encDisk string) error {
 	}
 	// The disk to encrypt may not already be encrypted and opened
 	dmName := MakeDeviceMapperName(encDisk)
-	if openedEncDev, found := blkDevs.GetByCriteria("", "/dev/mapper/"+dmName, "", "", ""); found {
+	if openedEncDev, found := blkDevs.GetByCriteria("", "/dev/mapper/"+dmName, "", "", "", "", ""); found {
 		return fmt.Errorf(MSG_E_ENC_ALREADY_OPEN, encDisk, openedEncDev.Path)
 	}
 	// The directory to encrypt may not be mounted from the disk to encrypt
@@ -147,7 +146,7 @@ func EncryptFSPreCheck(srcDir, encDisk string) error {
 		}
 	}
 	// Calculate size of files under the directory to encrypt
-	encDiskDev, found := blkDevs.GetByCriteria("", encDisk, "", "", "")
+	encDiskDev, found := blkDevs.GetByCriteria("", encDisk, "", "", "", "", "")
 	if !found {
 		return fmt.Errorf(MSG_E_ENCRYPT_DISK_NOT_FOUND, encDisk)
 	}
@@ -263,7 +262,7 @@ func EncryptFS(progressOut io.Writer, client *keyserv.CryptClient,
 	}
 
 	// Step 3. Announce the encrypted disk to key server.
-	fmt.Fprintf(progressOut, MSG_STEP_3, client.ServerHost)
+	fmt.Fprintf(progressOut, MSG_STEP_3, client.Address)
 	cryptDev, found := fs.GetBlockDevice(encDisk)
 	if !found {
 		return "", fmt.Errorf(MSG_E_NO_DEV_INFO, encDisk)

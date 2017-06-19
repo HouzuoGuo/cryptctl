@@ -28,23 +28,24 @@ const (
 	TEST_RPC_PASS        = "pass"
 )
 
+// CryptClient implements an RPC client for CryptServer.
 type CryptClient struct {
-	ServerHost string
-	ServerPort int
-	TLSCert    string
-	TLSKey     string
-	TLSConfig  *tls.Config
+	Address   string // Address is the server address string, IP:port for TCP and file name for domain socket.
+	Type      string // Type is either "tcp" or "unix" depends on the connection address.
+	TLSCert   string // TLSCert is path to TLS certificate that is presented by client to server.
+	TLSKey    string // TLSKey is path to TLS key corresponding to the certificate.
+	tlsConfig *tls.Config
 }
 
 /*
 Initialise an RPC client.
 The function does not immediately establish a connection to server, connection is only made along with each RPC call.
 */
-func NewCryptClient(host string, port int, caCertPEM []byte, certPath, certKeyPath string) (*CryptClient, error) {
+func NewCryptClient(connType, address string, caCertPEM []byte, certPath, certKeyPath string) (*CryptClient, error) {
 	client := &CryptClient{
-		ServerHost: host,
-		ServerPort: port,
-		TLSConfig:  new(tls.Config),
+		Type:      connType,
+		Address:   address,
+		tlsConfig: new(tls.Config),
 	}
 	if caCertPEM != nil && len(caCertPEM) > 0 {
 		// Use custom CA
@@ -52,7 +53,7 @@ func NewCryptClient(host string, port int, caCertPEM []byte, certPath, certKeyPa
 		if !caCertPool.AppendCertsFromPEM(caCertPEM) {
 			return nil, errors.New("NewCryptClient: failed to load custom CA certificates from PEM")
 		}
-		client.TLSConfig.RootCAs = caCertPool
+		client.tlsConfig.RootCAs = caCertPool
 	}
 	if certPath != "" {
 		// Tell client to present its identity to server
@@ -60,9 +61,9 @@ func NewCryptClient(host string, port int, caCertPEM []byte, certPath, certKeyPa
 		if err != nil {
 			return nil, err
 		}
-		client.TLSConfig.Certificates = []tls.Certificate{clientCert}
+		client.tlsConfig.Certificates = []tls.Certificate{clientCert}
 	}
-	client.TLSConfig.BuildNameToCertificate()
+	client.tlsConfig.BuildNameToCertificate()
 	return client, nil
 }
 
@@ -84,7 +85,7 @@ func NewCryptClientFromSysconfig(sysconf *sys.Sysconfig) (*CryptClient, error) {
 			return nil, fmt.Errorf("NewCryptClientFromSysconfig: failed to read CA PEM file at \"%s\" - %v", ca, err)
 		}
 	}
-	return NewCryptClient(host, port, caCertPEM, sysconf.GetString(CLIENT_CONF_CERT, ""), sysconf.GetString(CLIENT_CONF_CERT_KEY, ""))
+	return NewCryptClient("tcp", fmt.Sprintf("%s:%d", host, port), caCertPEM, sysconf.GetString(CLIENT_CONF_CERT, ""), sysconf.GetString(CLIENT_CONF_CERT_KEY, ""))
 }
 
 /*
@@ -93,13 +94,20 @@ The function deliberately establishes a new connection on each RPC call, in orde
 the client connections, especially in the area of keep-alive. The client is not expected to make high volume of calls
 hence there is absolutely no performance concern.
 */
-func (client *CryptClient) DoRPC(fun func(*rpc.Client) error) error {
-	conn, err := tls.DialWithDialer(
-		&net.Dialer{Timeout: RPC_DIAL_TIMEOUT_SEC * time.Second},
-		"tcp", fmt.Sprintf("%s:%d", client.ServerHost, client.ServerPort),
-		client.TLSConfig)
+func (client *CryptClient) DoRPC(fun func(*rpc.Client) error) (err error) {
+	var conn net.Conn
+	if client.Type == "tcp" {
+		conn, err = tls.DialWithDialer(
+			&net.Dialer{Timeout: RPC_DIAL_TIMEOUT_SEC * time.Second},
+			"tcp", client.Address, client.tlsConfig)
+	} else if client.Type == "unix" {
+		// TLS is not involved in domain socket communication
+		conn, err = net.Dial("unix", client.Address)
+	} else {
+		return fmt.Errorf("DoRPC: invalid client type \"%s\"", client.Type)
+	}
 	if err != nil {
-		return fmt.Errorf("DoRPC: failed to connect to %s on port %d - %v", client.ServerHost, client.ServerPort, err)
+		return fmt.Errorf("DoRPC: failed to connect to %s via %s - %v", client.Address, client.Type, err)
 	}
 	defer conn.Close()
 	rpcClient := rpc.NewClient(conn)
@@ -178,6 +186,28 @@ func (client *CryptClient) Shutdown(req ShutdownReq) error {
 	})
 }
 
+// ReloadRecord tells server to reload exactly one database record.
+func (client *CryptClient) ReloadRecord(req ReloadRecordReq) error {
+	return client.DoRPC(func(rpcClient *rpc.Client) error {
+		var dummy DummyAttr
+		return rpcClient.Call(fmt.Sprintf(RPCObjNameFmt, "ReloadRecord"), req, &dummy)
+	})
+}
+
+func (client *CryptClient) PollCommand(req PollCommandReq) (resp PollCommandResp, err error) {
+	err = client.DoRPC(func(rpcClient *rpc.Client) error {
+		return rpcClient.Call(fmt.Sprintf(RPCObjNameFmt, "PollCommand"), req, &resp)
+	})
+	return
+}
+
+func (client *CryptClient) SaveCommandResult(req SaveCommandResultReq) error {
+	return client.DoRPC(func(rpcClient *rpc.Client) error {
+		var dummy DummyAttr
+		return rpcClient.Call(fmt.Sprintf(RPCObjNameFmt, "SaveCommandResult"), req, &dummy)
+	})
+}
+
 // Start an RPC server in a testing configuration, return a client connected to the server and a teardown function.
 func StartTestServer(tb testing.TB) (*CryptClient, func(testing.TB)) {
 	keydbDir, err := ioutil.TempDir("", "cryptctl-rpctest")
@@ -202,21 +232,21 @@ func StartTestServer(tb testing.TB) (*CryptClient, func(testing.TB)) {
 		tb.Fatal(err)
 		return nil, nil
 	}
-	if err := srv.ListenRPC(); err != nil {
+	if err := srv.ListenTCP(); err != nil {
 		tb.Fatal(err)
 		return nil, nil
 	}
-	go srv.HandleConnections()
+	go srv.HandleTCPConnections()
 	// The test certificate's CN is "localhost"
 	caPath := path.Join(PkgInGopath, "keyrpc", "rpc_test.crt")
 	certContent, err := ioutil.ReadFile(caPath)
 	// Construct a client via function parameters
-	client, err := NewCryptClient("localhost", 3737, certContent, "", "")
+	client, err := NewCryptClient("tcp", "localhost:3737", certContent, "", "")
 	if err != nil {
 		tb.Fatal(err)
 		return nil, nil
 	}
-	client.TLSConfig.InsecureSkipVerify = true
+	client.tlsConfig.InsecureSkipVerify = true
 	// Server should start within about 2 seconds
 	serverReady := false
 	for i := 0; i < 20; i++ {

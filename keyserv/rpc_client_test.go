@@ -21,7 +21,7 @@ func TestCreateKeyReq_Validate(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.UUID = "/root/../a-"
-	if err := req.Validate(); err == nil || !strings.Contains(err.Error(), "Illegal chara") {
+	if err := req.Validate(); err == nil || !strings.Contains(err.Error(), "illegal chara") {
 		t.Fatal(err)
 	}
 	req.UUID = "abc-def-123-ghi"
@@ -118,17 +118,27 @@ func TestRPCCalls(t *testing.T) {
 	verifyKeyA := func(recA keydb.Record) {
 		if recA.UUID != "aaa" || recA.MountPoint != "/a" ||
 			!reflect.DeepEqual(recA.MountOptions, []string{"ro", "noatime"}) || recA.AliveIntervalSec != 1 || recA.AliveCount != 4 ||
-			recA.LastRetrieval.Timestamp == 0 || recA.LastRetrieval.Hostname != "localhost" || recA.LastRetrieval.IP != "127.0.0.1" ||
-			len(recA.AliveMessages["127.0.0.1"]) != 1 {
+			recA.LastRetrieval.Timestamp == 0 || recA.LastRetrieval.Hostname == "" || recA.LastRetrieval.IP == "" ||
+			len(recA.AliveMessages) != 1 {
 			t.Fatal(recA)
+		}
+		for _, hostAliveMessages := range recA.AliveMessages {
+			if len(hostAliveMessages) != 1 {
+				t.Fatal(recA)
+			}
 		}
 	}
 	verifyKeyB := func(recB keydb.Record) {
 		if recB.UUID != "bbb" || recB.MountPoint != "/b" ||
 			!reflect.DeepEqual(recB.MountOptions, []string{"ro", "noatime"}) || recB.AliveIntervalSec != 1 || recB.AliveCount != 4 ||
-			recB.LastRetrieval.Timestamp == 0 || recB.LastRetrieval.Hostname != "localhost" || recB.LastRetrieval.IP != "127.0.0.1" ||
-			len(recB.AliveMessages) != 1 || len(recB.AliveMessages["127.0.0.1"]) != 1 {
+			recB.LastRetrieval.Timestamp == 0 || recB.LastRetrieval.Hostname == "" || recB.LastRetrieval.IP == "" ||
+			len(recB.AliveMessages) != 1 {
 			t.Fatal(recB)
+		}
+		for _, hostAliveMessages := range recB.AliveMessages {
+			if len(hostAliveMessages) != 1 {
+				t.Fatal(recB)
+			}
 		}
 	}
 	verifyKeyA(autoRetrieveResp.Granted["aaa"])

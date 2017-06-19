@@ -80,6 +80,12 @@ Edit usage limitation and mount options of a key record.
 .TP
 .B show-key
 Show key record details such as mount options and current usages.
+.TP
+.B send-command
+In a key record, save a pending command to tell a computer (that polls for commands regularly) to mount or umount a disk.
+.TP
+.B clear-commands
+Clear all pending commands in a key record.
 
 .SH ENCRYPTION ROUTINE
 On a client computer, calling "cryptctl encrypt" will commence the encryption routine. The workflow will ask user for
@@ -90,7 +96,7 @@ the input parameters, and after a final confirmation prompt, encryption routine 
 .IP \n[step]
 Wipe the partition to be encrypted.
 .IP \n+[step]
-Generate a 512-bit encryption key from cryptographically secure random source provided by internal (auto-launched) or external KMIP service.
+Generate an encryption key from cryptographically secure random source provided by internal (auto-launched) or external KMIP service.
 .IP \n+[step]
 Set up LUKS metadata on the partition to encrypt, then make new file system on it, matching the type of that from the
 directory to encrypt.

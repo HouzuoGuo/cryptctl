@@ -22,7 +22,10 @@ are welcome to redistribute it under certain conditions; see file "LICENSE".
 Maintain a key server:
   cryptctl init-server     Set up this computer as a new key server.
   cryptctl list-keys       Show all encryption keys.
+  cryptctl show-key UUID   Display pending-commands and details of a key.
   cryptctl edit-key UUID   Edit stored key information.
+  cryptctl send-command    Record a pending mount/umount command for a disk.
+  cryptctl clear-commands  Clear all pending commands of a disk.
 
 Encrypt/unlock file systems:
   cryptctl encrypt         Set up a new file system for encryption.
@@ -88,6 +91,19 @@ func main() {
 			sys.ErrorExit("Please specify UUID of the key that you wish to see.")
 		}
 		if err := command.ShowKey(os.Args[2]); err != nil {
+			sys.ErrorExit("%v", err)
+		}
+	case "send-command":
+		if err := command.SendCommand(); err != nil {
+			sys.ErrorExit("%v", err)
+		}
+	case "clear-commands":
+		if err := command.ClearPendingCommands(); err != nil {
+			sys.ErrorExit("%v", err)
+		}
+	case "client-daemon":
+		// Client - run daemon that primarily polls and reacts to pending commands issued by RPC server
+		if err := command.ClientDaemon(); err != nil {
 			sys.ErrorExit("%v", err)
 		}
 	case "encrypt":

@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"reflect"
 	"sort"
 	"strconv"
 	"sync"
@@ -50,11 +51,14 @@ If the specified record is not found in file system, an error is returned
 Caller should consider ot lock memory.
 */
 func OpenDBOneRecord(dir, recordUUID string) (db *DB, err error) {
+	if err = ValidateUUID(recordUUID); err != nil {
+		return
+	}
 	if err := os.MkdirAll(dir, DB_DIR_FILE_MODE); err != nil {
 		return nil, fmt.Errorf("OpenDBOneRecord: failed to make db directory \"%s\" - %v", dir, err)
 	}
 	db = &DB{Dir: dir, Lock: new(sync.RWMutex), RecordsByUUID: map[string]Record{}, RecordsByID: map[string]Record{}}
-	keyRecord, err := db.LoadRecord(path.Join(dir, recordUUID))
+	keyRecord, err := db.ReadRecord(path.Join(dir, recordUUID))
 	if err == nil {
 		db.RecordsByUUID[recordUUID] = keyRecord
 		db.RecordsByID[keyRecord.ID] = keyRecord
@@ -63,13 +67,30 @@ func OpenDBOneRecord(dir, recordUUID string) (db *DB, err error) {
 }
 
 // Read and deserialise a key record from file system.
-func (db *DB) LoadRecord(absPath string) (keyRecord Record, err error) {
+func (db *DB) ReadRecord(absPath string) (keyRecord Record, err error) {
 	keyRecordContent, err := ioutil.ReadFile(absPath)
 	if err != nil {
 		return
 	}
 	err = keyRecord.Deserialise(keyRecordContent)
 	return
+}
+
+/*
+ReloadRecord reads the latest record content corresponding to the UUID from disk file and loads it into memory.
+The function panics if the record version is not the latest.
+*/
+func (db *DB) ReloadRecord(uuid string) error {
+	if err := ValidateUUID(uuid); err != nil {
+		return err
+	}
+	rec, err := db.ReadRecord(path.Join(db.Dir, uuid))
+	if err != nil {
+		return err
+	}
+	db.RecordsByUUID[uuid] = rec
+	db.RecordsByID[rec.ID] = rec
+	return nil
 }
 
 // (Re)load database records.
@@ -89,16 +110,17 @@ func (db *DB) ReloadDB() error {
 	// Read and deserialise each record file while finding out the last sequence number
 	for _, fileInfo := range keyFiles {
 		filePath := path.Join(db.Dir, fileInfo.Name())
-		if keyRecord, err := db.LoadRecord(filePath); err == nil {
+		if keyRecord, err := db.ReadRecord(filePath); err == nil {
 			if keyRecord.Version == CurrentRecordVersion {
 				db.RecordsByUUID[keyRecord.UUID] = keyRecord
 				db.RecordsByID[keyRecord.ID] = keyRecord
-				// If the record was created by built-in KMIP server, the key is a sequence number.
+				/*
+					If the record was created by built-in KMIP server, the key is a sequence number.
+					Otherwise, it can be anything such as a number or ID or string.
+				*/
 				idSeq, _ := strconv.ParseInt(keyRecord.ID, 10, 64)
-				if err == nil {
-					if idSeq > lastSequenceNum {
-						lastSequenceNum = idSeq
-					}
+				if idSeq > lastSequenceNum {
+					lastSequenceNum = idSeq
 				}
 			} else {
 				// Upgrade the record and place them into maps later
@@ -108,6 +130,11 @@ func (db *DB) ReloadDB() error {
 			log.Printf("DB.ReloadDB: non-fatal failure occured when reading record \"%s\" - %v", filePath, err)
 		}
 	}
+	/*
+		The record upgrade process must takes place after all records are successfully read, because
+		 the upgrade from version 0 to 1 involves assigning records a sequence number that can only be determined
+		 after having read all records.
+	*/
 	for _, record := range recordsToUpgrade {
 		if err := db.UpgradeRecord(record); err != nil {
 			return err
@@ -122,9 +149,17 @@ func (db *DB) UpgradeRecord(record Record) error {
 	switch record.Version {
 	case 0:
 		return db.UpgradeRecordToVersion1(record)
+	case 1:
+		// Version 2 brings PendingCommands map
+		record.Version = 2
+		record.PendingCommands = make(map[string][]PendingCommand)
+		if _, err := db.upsert(record, true); err != nil {
+			return err
+		}
 	default:
 		return nil
 	}
+	return nil
 }
 
 /*
@@ -157,6 +192,13 @@ If the record does not yet have a KMIP ID, it will be given a sequence number as
 IO errors are returned and logged to stderr.
 */
 func (db *DB) upsert(rec Record, doSync bool) (string, error) {
+	// Initialise incomplete nil values of the struct
+	if rec.PendingCommands == nil {
+		rec.PendingCommands = make(map[string][]PendingCommand)
+	}
+	if rec.AliveMessages == nil {
+		rec.AliveMessages = make(map[string][]AliveMessage)
+	}
 	// For a new record that doesn't yet have a sequence number, assign it the next number in sequence.
 	if rec.ID == "" {
 		db.LastSequenceNum++
@@ -272,12 +314,59 @@ func (db *DB) List() (sortedRecords RecordSlice) {
 func (db *DB) Erase(uuid string) error {
 	db.Lock.Lock()
 	defer db.Lock.Unlock()
-	if _, exists := db.RecordsByUUID[uuid]; !exists {
+	rec, exists := db.RecordsByUUID[uuid]
+	if !exists {
 		return fmt.Errorf("DB.Erase: record '%s' does not exist", uuid)
 	}
 	delete(db.RecordsByUUID, uuid)
+	delete(db.RecordsByID, rec.ID)
 	if err := fs.SecureErase(path.Join(db.Dir, uuid), true); err != nil {
 		return fmt.Errorf("DB.Erase: failed to delete db record for %s - %v", uuid, err)
 	}
 	return nil
+}
+
+/*
+UpdateSeenFlag updates "seen" flag of a pending command to true.
+The flag is updated by looking for a command record matched to the specified IP, array index, and content.
+If a matching record is not found, the function will do nothing.
+*/
+func (db *DB) UpdateSeenFlag(uuid, ip string, content interface{}) {
+	db.Lock.Lock()
+	defer db.Lock.Unlock()
+	rec, found := db.RecordsByUUID[uuid]
+	if !found {
+		return
+	}
+	cmds, found := rec.PendingCommands[ip]
+	for i, cmd := range cmds {
+		if reflect.DeepEqual(cmd.Content, content) {
+			cmds[i].SeenByClient = true
+			break
+		}
+	}
+	db.upsert(rec, false)
+}
+
+/*
+UpdateCommandResult updates execution result of a pending command.
+The pending command is updated by looking for a command record matched to the specified UUID, IP, and content.
+If a matching record is not found, the function will do nothing.
+*/
+func (db *DB) UpdateCommandResult(uuid, ip string, content interface{}, result string) {
+	db.Lock.Lock()
+	defer db.Lock.Unlock()
+	rec, found := db.RecordsByUUID[uuid]
+	if !found {
+		return
+	}
+	cmds, found := rec.PendingCommands[ip]
+	for i, cmd := range cmds {
+		if cmd.Content == content {
+			cmds[i].SeenByClient = true
+			cmds[i].ClientResult = result
+			break
+		}
+	}
+	db.upsert(rec, false)
 }

@@ -3,18 +3,19 @@
 package keydb
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"testing"
 	"time"
 )
 
-const TEST_DIR = "/tmp/cryptctl-dbtest"
+const TestDBDir = "/tmp/cryptctl-dbtest"
 
 func TestRecordCRUD(t *testing.T) {
-	defer os.RemoveAll(TEST_DIR)
-	os.RemoveAll(TEST_DIR)
-	db, err := OpenDB(TEST_DIR)
+	defer os.RemoveAll(TestDBDir)
+	os.RemoveAll(TestDBDir)
+	db, err := OpenDB(TestDBDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,6 +34,7 @@ func TestRecordCRUD(t *testing.T) {
 		AliveIntervalSec: 1,
 		AliveCount:       4,
 		AliveMessages:    map[string][]AliveMessage{},
+		PendingCommands:  make(map[string][]PendingCommand),
 	}
 	rec1Alive := rec1
 	rec1Alive.LastRetrieval = aliveMsg
@@ -46,6 +48,7 @@ func TestRecordCRUD(t *testing.T) {
 		AliveIntervalSec: 1,
 		AliveCount:       4,
 		AliveMessages:    map[string][]AliveMessage{},
+		PendingCommands:  make(map[string][]PendingCommand),
 	}
 	rec2Alive := rec2
 	rec2Alive.LastRetrieval = aliveMsg
@@ -65,7 +68,7 @@ func TestRecordCRUD(t *testing.T) {
 	if found, rejected, missing := db.Select(aliveMsg, true, "1", "doesnotexist"); !reflect.DeepEqual(found, map[string]Record{rec1.UUID: rec1Alive}) ||
 		!reflect.DeepEqual(rejected, []string{}) ||
 		!reflect.DeepEqual(missing, []string{"doesnotexist"}) {
-		t.Fatal(found, rejected, missing)
+		t.Fatalf("\n%+v\n%+v\n%+v\n%+v\n", found, map[string]Record{rec1.UUID: rec1Alive}, rejected, missing)
 	}
 	if found, rejected, missing := db.Select(aliveMsg, true, "1", "doesnotexist", "2"); !reflect.DeepEqual(found, map[string]Record{rec2.UUID: rec2Alive}) ||
 		!reflect.DeepEqual(rejected, []string{"1"}) ||
@@ -105,7 +108,7 @@ func TestRecordCRUD(t *testing.T) {
 		t.Fatal(found, rejected, missing)
 	}
 	// Reload database and test query once more (2 is already retrieved and hence it shall be rejected)
-	db, err = OpenDB(TEST_DIR)
+	db, err = OpenDB(TestDBDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,9 +120,9 @@ func TestRecordCRUD(t *testing.T) {
 }
 
 func TestOpenDBOneRecord(t *testing.T) {
-	defer os.RemoveAll(TEST_DIR)
-	os.RemoveAll(TEST_DIR)
-	db, err := OpenDB(TEST_DIR)
+	defer os.RemoveAll(TestDBDir)
+	os.RemoveAll(TestDBDir)
+	db, err := OpenDB(TestDBDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,12 +136,13 @@ func TestOpenDBOneRecord(t *testing.T) {
 			IP:        "ip1",
 			Timestamp: 3,
 		},
-		AliveMessages: make(map[string][]AliveMessage),
+		AliveMessages:   make(map[string][]AliveMessage),
+		PendingCommands: make(map[string][]PendingCommand),
 	}
 	if seq, err := db.Upsert(rec); err != nil || seq != "1" {
 		t.Fatal(err)
 	}
-	dbOneRecord, err := OpenDBOneRecord(TEST_DIR, "a")
+	dbOneRecord, err := OpenDBOneRecord(TestDBDir, "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,8 +165,8 @@ func TestOpenDBOneRecord(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
-	defer os.RemoveAll(TEST_DIR)
-	db, err := OpenDB(TEST_DIR)
+	defer os.RemoveAll(TestDBDir)
+	db, err := OpenDB(TestDBDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +181,8 @@ func TestList(t *testing.T) {
 			IP:        "ip1",
 			Timestamp: 3,
 		},
-		AliveMessages: make(map[string][]AliveMessage),
+		AliveMessages:   make(map[string][]AliveMessage),
+		PendingCommands: make(map[string][]PendingCommand),
 	}
 	rec1NoKey := rec1
 	rec1NoKey.Key = nil
@@ -191,7 +196,8 @@ func TestList(t *testing.T) {
 			IP:        "ip1",
 			Timestamp: 1,
 		},
-		AliveMessages: make(map[string][]AliveMessage),
+		AliveMessages:   make(map[string][]AliveMessage),
+		PendingCommands: make(map[string][]PendingCommand),
 	}
 	rec2NoKey := rec2
 	rec2NoKey.Key = nil
@@ -205,7 +211,8 @@ func TestList(t *testing.T) {
 			IP:        "ip1",
 			Timestamp: 2,
 		},
-		AliveMessages: make(map[string][]AliveMessage),
+		AliveMessages:   make(map[string][]AliveMessage),
+		PendingCommands: make(map[string][]PendingCommand),
 	}
 	rec3NoKey := rec3
 	rec3NoKey.Key = nil
@@ -226,5 +233,119 @@ func TestList(t *testing.T) {
 		!reflect.DeepEqual(recs[1], rec3NoKey) ||
 		!reflect.DeepEqual(recs[2], rec2NoKey) {
 		t.Fatal(recs)
+	}
+}
+
+func TestDB_LoadRecord(t *testing.T) {
+	defer os.RemoveAll(TestDBDir)
+	os.RemoveAll(TestDBDir)
+	// Open identical directory in two database instances
+	db, err := OpenDB(TestDBDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db2, err := OpenDB(TestDBDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create a record in the first database instance
+	rec := Record{
+		UUID:         "a",
+		Key:          []byte{1, 2, 3},
+		MountPoint:   "/a",
+		MountOptions: []string{},
+		LastRetrieval: AliveMessage{
+			Hostname:  "host1",
+			IP:        "ip1",
+			Timestamp: 3,
+		},
+		AliveMessages: make(map[string][]AliveMessage),
+	}
+	if seq, err := db.Upsert(rec); err != nil || seq != "1" {
+		t.Fatal(err)
+	}
+	// Load the newly created record in the second database instance
+	if err := db2.ReloadRecord("a"); err != nil {
+		t.Fatal(err)
+	}
+	if rec, found := db2.GetByID("1"); !found || rec.UUID != "a" {
+		t.Fatal(rec, found)
+	}
+	if err := db2.ReloadRecord("doesnotexist"); err == nil {
+		t.Fatal("did not error")
+	}
+}
+
+func TestDB_UpdateSeenFlag(t *testing.T) {
+	defer os.RemoveAll(TestDBDir)
+	os.RemoveAll(TestDBDir)
+	db, err := OpenDB(TestDBDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Upsert(Record{ID: "id1", UUID: "a", Key: []byte{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	recA := db.RecordsByUUID["a"]
+	recA.AddPendingCommand("1.1.1.1", PendingCommand{
+		ValidFrom: time.Unix(1, 0),
+		Validity:  10 * time.Hour,
+		IP:        "1.1.1.1",
+		Content:   "1st command",
+	})
+	recA.AddPendingCommand("1.1.1.1", PendingCommand{
+		ValidFrom: time.Unix(1, 0),
+		Validity:  10 * time.Hour,
+		IP:        "1.1.1.1",
+		Content:   "2nd command",
+	})
+	recA.AddPendingCommand("2.2.2.2", PendingCommand{
+		ValidFrom: time.Unix(1, 0),
+		Validity:  10 * time.Hour,
+		IP:        "2.2.2.2",
+		Content:   "3rd command",
+	})
+	fmt.Printf("%+v\n", recA)
+	db.RecordsByUUID["a"] = recA
+
+	db.UpdateSeenFlag("a", "1.1.1.1", "1st command")
+	db.UpdateCommandResult("a", "1.1.1.1", "2nd command", "success")
+	db.UpdateCommandResult("a", "2.2.2.2", "3rd command", "failure")
+
+	expected := map[string][]PendingCommand{
+		"1.1.1.1": {
+			{
+				ValidFrom:    time.Unix(1, 0),
+				Validity:     10 * time.Hour,
+				IP:           "1.1.1.1",
+				Content:      "1st command",
+				SeenByClient: true,
+			},
+			{
+				ValidFrom:    time.Unix(1, 0),
+				Validity:     10 * time.Hour,
+				IP:           "1.1.1.1",
+				Content:      "2nd command",
+				SeenByClient: true,
+				ClientResult: "success",
+			},
+		},
+		"2.2.2.2": {
+			{
+				ValidFrom:    time.Unix(1, 0),
+				Validity:     10 * time.Hour,
+				IP:           "2.2.2.2",
+				Content:      "3rd command",
+				SeenByClient: true,
+				ClientResult: "failure",
+			},
+		},
+	}
+	if !reflect.DeepEqual(expected, db.RecordsByUUID["a"].PendingCommands) {
+		t.Fatalf("\n%+v\n%+v\n", expected, db.RecordsByUUID["a"].PendingCommands)
+	}
+	if !reflect.DeepEqual(expected, db.RecordsByID["id1"].PendingCommands) {
+		t.Fatalf("\n%+v\n%+v\n", expected, db.RecordsByID["id1"].PendingCommands)
 	}
 }

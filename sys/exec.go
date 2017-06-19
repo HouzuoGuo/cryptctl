@@ -52,7 +52,7 @@ func Exec(stdin io.Reader, stdout, stderr io.Writer, programName string, program
 // Lock all program memory into main memory to prevent sensitive data from leaking into swap.
 func LockMem() {
 	if os.Geteuid() != 0 {
-		fmt.Fprintln(os.Stderr, "Please run cryptctl with root privilege.")
+		fmt.Fprintln(os.Stderr, "Please run this cryptctl command with root privilege.")
 		os.Exit(111)
 	}
 	if err := syscall.Mlockall(syscall.MCL_CURRENT | syscall.MCL_FUTURE); err != nil {

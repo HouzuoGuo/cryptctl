@@ -5,20 +5,55 @@ package keydb
 import (
 	"bytes"
 	"encoding/gob"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
 
 const (
-	CurrentRecordVersion = 1
+	CurrentRecordVersion = 2 // CurrentRecordVersion is the version of new database records to be created by cryptctl.
 )
 
-// A client computer actively using an encryption key regularly sends alive messages to the server.
+var RegexUUID = regexp.MustCompile("^[a-zA-Z0-9-]+$") // RegexUUID matches characters that are allowed in a UUID
+
+/*
+ValidateUUID returns an error only if the input string is empty, or if there are illegal
+characters among the input.
+*/
+func ValidateUUID(in string) error {
+	if in == "" {
+		return errors.New("ValidateUUID: UUID must not be empty")
+	} else if !RegexUUID.MatchString(in) {
+		return errors.New("ValidateUUID: illegal characters appeared in UUID")
+	}
+	return nil
+}
+
+/*
+AliveMessage is a component of key database record, it represents a heartbeat sent by a computer who is actively
+using an encryption key - i.e. the encrypted disk is currently unlocked and online.
+*/
 type AliveMessage struct {
-	Hostname  string // client computer's host name as reported by itself
-	IP        string // client computer's IP as seen by this server
-	Timestamp int64  // alive message's timestamp as seen by this server
+	Hostname  string // Hostname is the host name reported by client computer itself.
+	IP        string // IP is the client computer's IP as seen by cryptctl server.
+	Timestamp int64  // Timestamp is the moment the message arrived at cryptctl server.
+}
+
+// PendingCommand is a time-restricted command issued by cryptctl server administrator to be polled by a client.
+type PendingCommand struct {
+	ValidFrom    time.Time     // ValidFrom is the timestamp at which moment the command was created.
+	Validity     time.Duration // Validity determines the point in time the command expires. Expired commands disappear almost immediately.
+	IP           string        // IP is the client computer's IP the command is issued to.
+	Content      interface{}   // Content is the command content, serialised and transmitted between server and client.
+	SeenByClient bool          // SeenByClient is updated to true via RPC once the client has seen this command.
+	ClientResult string        // ClientResult is updated via RPC once client has finished executing this command.
+}
+
+// IsValid returns true only if the command has not expired.
+func (cmd *PendingCommand) IsValid() bool {
+	return cmd.ValidFrom.Add(cmd.Validity).Unix() > time.Now().Unix()
 }
 
 /*
@@ -27,18 +62,22 @@ When stored on disk, the record resides in a file encoded in gob.
 The binary encoding method is intentionally chosen to deter users from manually editing the files on disk.
 */
 type Record struct {
-	ID               string                    // KMIP key ID
-	Version          int                       // Record version
-	CreationTime     time.Time                 // creation time
-	Key              []byte                    // encryption key in plain form
-	UUID             string                    // file system uuid
-	MountPoint       string                    // mount point of the file system
-	MountOptions     []string                  // mount options of the file system
-	MaxActive        int                       // maximum allowed active key users (computers), set to <=0 to allow unlimited.
-	LastRetrieval    AliveMessage              // the most recent host who retrieved this key
-	AliveIntervalSec int                       // interval in seconds at which all user of the file system holding this key must report they're online
-	AliveCount       int                       // a client computer is considered dead after missing so many alive messages
-	AliveMessages    map[string][]AliveMessage // recent alive messages (latest is last), string map key is the host IP as seen by this server.
+	ID           string    // ID is assigned by KMIP server for the encryption key.
+	Version      int       // Version is the version number of this record. Outdated records are automatically upgraded.
+	CreationTime time.Time // CreationTime is the timestamp at which the record was created.
+	Key          []byte    // Key is the disk encryption key if the key is not stored on an external KMIP server.
+
+	UUID         string   // UUID is the block device UUID of the file system.
+	MountPoint   string   // MountPoint is the location (directory) where this file system is expected to be mounted to.
+	MountOptions []string // MountOptions is a string array of mount options specific to the file system.
+
+	MaxActive        int // MaxActive is the maximum simultaneous number of online users (computers) for the key, or <=0 for unlimited.
+	AliveIntervalSec int // AliveIntervalSec is interval in seconds that all key users (computers) should report they're online.
+	AliveCount       int // AliveCount is number of times a key user (computer) can miss regular report and be considered offline.
+
+	LastRetrieval   AliveMessage                // LastRetrieval is the computer who most recently successfully retrieved the key.
+	AliveMessages   map[string][]AliveMessage   // AliveMessages are the most recent alive reports in IP - message array pairs.
+	PendingCommands map[string][]PendingCommand // PendingCommands are some command to be periodcally polled by clients carrying the IP address (keys).
 }
 
 // Return mount options in a single string, as accepted by mount command.
@@ -74,6 +113,40 @@ func (rec *Record) RemoveDeadHosts() (deadFinalMessage map[string]AliveMessage) 
 		delete(rec.AliveMessages, deadIP)
 	}
 	return
+}
+
+// RemoveDeadPendingCommands removes pending commands and results that were made 10x validity period in the past.
+func (rec *Record) RemoveExpiredPendingCommands() {
+	ipToDelete := make([]string, 0, 0)
+	for ip, commands := range rec.PendingCommands {
+		remainingCommands := make([]PendingCommand, 0, len(commands))
+		for _, cmd := range commands {
+			if cmd.IsValid() {
+				remainingCommands = append(remainingCommands, cmd)
+			}
+		}
+		if len(remainingCommands) > 0 {
+			rec.PendingCommands[ip] = remainingCommands
+		} else {
+			ipToDelete = append(ipToDelete, ip)
+		}
+	}
+	for _, ip := range ipToDelete {
+		delete(rec.PendingCommands, ip)
+	}
+}
+
+// AddPendingCommand stores a command associated to the input IP address.
+func (rec *Record) AddPendingCommand(ip string, cmd PendingCommand) {
+	if _, found := rec.PendingCommands[ip]; !found {
+		rec.PendingCommands[ip] = make([]PendingCommand, 0, 4)
+	}
+	rec.PendingCommands[ip] = append(rec.PendingCommands[ip], cmd)
+}
+
+// ClearPendingCommands removes all pending commands.
+func (rec *Record) ClearPendingCommands() {
+	rec.PendingCommands = make(map[string][]PendingCommand)
 }
 
 /*

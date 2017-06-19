@@ -23,7 +23,7 @@ import (
 )
 
 func TestPreCheck(t *testing.T) {
-	rootDev, found := fs.GetBlockDevices().GetByCriteria("", "", "", "", "/")
+	rootDev, found := fs.GetBlockDevices().GetByCriteria("", "", "", "", "/", "", "")
 	if !found {
 		t.Fatal("cannot find root's device")
 	}
@@ -100,17 +100,17 @@ func TestEncryptDecrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.ListenRPC(); err != nil {
+	if err := srv.ListenTCP(); err != nil {
 		t.Fatal(err)
 	}
-	go srv.HandleConnections()
+	go srv.HandleTCPConnections()
 	// Make an RPC client
 	time.Sleep(2 * time.Second)
 	certContent, err := ioutil.ReadFile(path.Join(keyserv.PkgInGopath, "keyserv", "rpc_test.crt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := keyserv.NewCryptClient("localhost", 3737, certContent, "", "")
+	client, err := keyserv.NewCryptClient("tcp", "localhost:3737", certContent, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,10 +314,10 @@ func TestEncryptDecrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.ListenRPC(); err != nil {
+	if err := srv.ListenTCP(); err != nil {
 		t.Fatal(err)
 	}
-	go srv.HandleConnections()
+	go srv.HandleTCPConnections()
 
 	// There's no need to make a new RPC client because the client does not hold a persistent connection
 	if err := ManOnlineUnlockFS(os.Stdout, client, keyserv.TEST_RPC_PASS); err != nil {
@@ -334,14 +334,14 @@ func TestEncryptDecrypt(t *testing.T) {
 	*/
 	resetDisks()
 	blkDevs := fs.GetBlockDevices()
-	loop0Dev, found := blkDevs.GetByCriteria("", "/dev/loop0", "", "", "")
+	loop0Dev, found := blkDevs.GetByCriteria("", "/dev/loop0", "", "", "", "", "")
 	if !found || !loop0Dev.IsLUKSEncrypted() {
 		t.Fatal(loop0Dev)
 	}
 	if loop0Dev.UUID != encUUID0 {
 		t.Fatal(loop0Dev.UUID, encUUID0)
 	}
-	loop1Dev, found := blkDevs.GetByCriteria("", "/dev/loop1", "", "", "")
+	loop1Dev, found := blkDevs.GetByCriteria("", "/dev/loop1", "", "", "", "", "")
 	if !found || !loop1Dev.IsLUKSEncrypted() {
 		t.Fatal(loop1Dev)
 	}
@@ -409,10 +409,10 @@ func TestEncryptDecrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.ListenRPC(); err != nil {
+	if err := srv.ListenTCP(); err != nil {
 		t.Fatal(err)
 	}
-	go srv.HandleConnections()
+	go srv.HandleTCPConnections()
 	// Check result from each unlock attempt
 	onlineUnlockErr := make([]error, 5)
 	for i := 0; i < 5; i++ {

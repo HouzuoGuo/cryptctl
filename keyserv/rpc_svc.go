@@ -20,7 +20,6 @@ import (
 	"net/rpc"
 	"os"
 	"path"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -55,6 +54,8 @@ const (
 	SRV_CONF_KMIP_SERVER_TLS_KEY  = "KMIP_TLS_CERT_KEY_PEM"
 
 	KeyNamePrefix = "cryptctl-" // Prefix string prepended to KMIP keys
+
+	DomainSocketFile = "/var/run/cryptctl-domainsocket" // DomainSocketFile is the file name of unix domain socket server
 )
 
 var PkgInGopath = path.Join(path.Join(os.Getenv("GOPATH"), "/src/github.com/HouzuoGuo/cryptctl")) // this package in gopath
@@ -172,7 +173,8 @@ type CryptServer struct {
 	Mailer            *Mailer            // mail notification sender
 	KeyDB             *keydb.DB          // encryption key database
 	TLSConfig         *tls.Config        // TLS certificate chain and private key
-	Listener          net.Listener       // listener for client connections
+	TCPListener       net.Listener       // TCPListener is the TCP server that serves all RPC functions
+	UnixListener      net.Listener       // UnixListener is the Unix domain socket that serves all RPC functions
 	BuiltInKMIPServer *KMIPServer        // Built-in KMIP server in case there's no external server
 	KMIPClient        *KMIPClient        // KMIP client connected to either built-in KMIP server or external server
 	AdminChallenge    []byte             // a random secret that must be verified for incoming shutdown/reload requests
@@ -222,7 +224,7 @@ Start RPC server. If the RPC server does not have KMIP connectivity settings, st
 of KMIP server.
 Block caller until the listener quits.
 */
-func (srv *CryptServer) ListenRPC() error {
+func (srv *CryptServer) ListenTCP() error {
 	var err error
 	if len(srv.Config.KMIPAddresses) == 0 {
 		// If RPC server settings do not have KMIP connectivity settings, start my own KMIP server.
@@ -257,24 +259,37 @@ func (srv *CryptServer) ListenRPC() error {
 			return err
 		}
 		if !srv.Config.KMIPTLSDoVerify {
-			log.Printf("CryptServer.ListenRPC: KMIP client will not verify KMIP server's identity, as instructed by configuration.")
+			log.Printf("CryptServer.ListenTCP: KMIP client will not verify KMIP server's identity, as instructed by configuration.")
 			srv.KMIPClient.TLSConfig.InsecureSkipVerify = !srv.Config.KMIPTLSDoVerify
 		}
 	}
 	// Start ordinary RPC server
-	if srv.Listener, err = tls.Listen("tcp", fmt.Sprintf("%s:%d", srv.Config.Address, srv.Config.Port), srv.TLSConfig); err != nil {
-		return fmt.Errorf("CryptServer.ListenRPC: failed to listen on %s:%d - %v", srv.Config.Address, srv.Config.Port, err)
+	if srv.TCPListener, err = tls.Listen("tcp", fmt.Sprintf("%s:%d", srv.Config.Address, srv.Config.Port), srv.TLSConfig); err != nil {
+		return fmt.Errorf("CryptServer.ListenTCP: failed to listen on %s:%d - %v", srv.Config.Address, srv.Config.Port, err)
 	}
-	log.Printf("CryptServer.ListenRPC: listening on %s:%d using TLS certficate \"%s\"", srv.Config.Address, srv.Config.Port, srv.Config.CertPEM)
+	log.Printf("CryptServer.ListenTCP: listening on %s:%d using TLS certficate \"%s\"", srv.Config.Address, srv.Config.Port, srv.Config.CertPEM)
 	return nil
 }
 
-// Handle incoming connections in a loop. Block caller until listener closes.
-func (srv *CryptServer) HandleConnections() {
+// ListenUnix starts an RPC server listener on unix domain socket.
+func (srv *CryptServer) ListenUnix() (err error) {
+	if err = os.RemoveAll(DomainSocketFile); err != nil {
+		return
+	}
+	srv.UnixListener, err = net.Listen("unix", DomainSocketFile)
+	log.Printf("CryptServer.ListenUnix: listening on %s", DomainSocketFile)
+	return
+}
+
+/*
+HandleTCPConnections accepts connections on TCP listener in a continuous loop.
+Blocks caller until listener closes.
+*/
+func (srv *CryptServer) HandleTCPConnections() {
 	for {
-		incoming, err := srv.Listener.Accept()
+		incoming, err := srv.TCPListener.Accept()
 		if err != nil {
-			log.Printf("CryptServer.HandleConnections: quit now - %v", err)
+			log.Printf("CryptServer.HandleTCPConnections: quit now - %v", err)
 			return
 		}
 		// The connection is served by a dedicated RPC server instance
@@ -285,10 +300,31 @@ func (srv *CryptServer) HandleConnections() {
 	}
 }
 
-// Shut down RPC server listener. If built-in KMIP server was started, shut that one down as well.
+/*
+HandleUnixConnections accepts connections on Unix domain socket in a continuous loop.
+Blocks caller until the listener closes.
+*/
+func (srv *CryptServer) HandleUnixConnections() {
+	for {
+		incoming, err := srv.UnixListener.Accept()
+		if err != nil {
+			log.Printf("CryptServer.HandleUnixConnections: quit now - %v", err)
+			return
+		}
+		go func(conn net.Conn) {
+			srv.ServeConn(conn)
+			conn.Close()
+		}(incoming)
+	}
+}
+
+// Shut down all RPC server listeners. If built-in KMIP server was started, shut that one down as well.
 func (srv *CryptServer) Shutdown() {
-	if listener := srv.Listener.Close(); listener != nil {
-		srv.Listener.Close()
+	if listener := srv.TCPListener.Close(); listener != nil {
+		srv.TCPListener.Close()
+	}
+	if listener := srv.UnixListener.Close(); listener != nil {
+		srv.UnixListener.Close()
 	}
 	if kmipServer := srv.BuiltInKMIPServer; kmipServer != nil {
 		kmipServer.Shutdown()
@@ -383,10 +419,8 @@ type CreateKeyReq struct {
 
 // Make sure that the request attributes are sane.
 func (req CreateKeyReq) Validate() error {
-	if req.UUID == "" {
-		return errors.New("UUID must not be empty")
-	} else if cleanedID := filepath.Clean(req.UUID); cleanedID != req.UUID {
-		return errors.New("Illegal characters appeared in UUID")
+	if err := keydb.ValidateUUID(req.UUID); err != nil {
+		return err
 	} else if req.MountPoint == "" {
 		return errors.New("Mount point must not be empty")
 	}
@@ -644,12 +678,84 @@ func (rpcConn *CryptServiceConn) Shutdown(req ShutdownReq, _ *DummyAttr) error {
 	if subtle.ConstantTimeCompare(rpcConn.Svc.AdminChallenge, req.Challenge) != 1 {
 		return errors.New("Shutdown: incorrect challenge")
 	}
-	err := rpcConn.Svc.Listener.Close()
+	err := rpcConn.Svc.TCPListener.Close()
 	return err
 }
 
 // Hand over the salt that was used to hash server's access password.
 func (rpcConn *CryptServiceConn) GetSalt(_ DummyAttr, salt *PasswordSalt) error {
 	copy((*salt)[:], rpcConn.Svc.Config.PasswordSalt[:])
+	return nil
+}
+
+// ReloadRecordReq instructs server to reload one record from disk into database.
+type ReloadRecordReq struct {
+	Password HashedPassword // Password is provided by client and validated to grant access to this function.
+	UUID     string         // UUID is the UUID of record to be reloaded.
+}
+
+// ReloadRecord causes exactly one database record to be reloaded from disk.
+func (rpcConn *CryptServiceConn) ReloadRecord(req ReloadRecordReq, _ *DummyAttr) error {
+	if err := rpcConn.Svc.ValidatePassword(req.Password); err != nil {
+		return err
+	}
+	if err := rpcConn.Svc.KeyDB.ReloadRecord(req.UUID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// PollCommandReq instructs server to return the oldest unseen pending command associated with requested UUIDs.
+type PollCommandReq struct {
+	UUIDs []string // UUIDs is an array of UUID to poll commands from.
+}
+
+// PollCommandResp contains the oldest unseen pending command from each of requested UUIDs.
+type PollCommandResp struct {
+	Commands map[string][]keydb.PendingCommand
+}
+
+// PollCommand returns exactly one unseen pending command.
+func (rpcConn *CryptServiceConn) PollCommand(req PollCommandReq, resp *PollCommandResp) error {
+	*resp = PollCommandResp{Commands: make(map[string][]keydb.PendingCommand)}
+	counter := 0
+	for _, uuid := range req.UUIDs {
+		rec, found := rpcConn.Svc.KeyDB.GetByUUID(uuid)
+		if !found {
+			// Not-found UUID is not an error condition
+			continue
+		}
+		cmds, found := rec.PendingCommands[rpcConn.RemoteAddr]
+		if !found || len(cmds) == 0 {
+			// There are no pending commands for this IP
+			continue
+		}
+		for _, cmd := range cmds {
+			if cmd.IsValid() && !cmd.SeenByClient {
+				if _, found := resp.Commands[uuid]; !found {
+					resp.Commands[uuid] = make([]keydb.PendingCommand, 0, 1)
+				}
+				// Respond with the oldest yet still valid pending command of the record
+				resp.Commands[uuid] = append(resp.Commands[uuid], cmd)
+				// The command is now "seen" by client.
+				rpcConn.Svc.KeyDB.UpdateSeenFlag(uuid, rpcConn.RemoteAddr, cmd.Content)
+				counter++
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// SaveCommandResultReq saves execution result of a pending command that was previously polled by a client.
+type SaveCommandResultReq struct {
+	UUID           string      // UUID is the UUID of record.
+	CommandContent interface{} // CommandContent is the content of pending command as it was originally received.
+	Result         string      // Result is a human readable text representation of execution result
+}
+
+// SaveCommandResult saves execution result of a pending command.
+func (rpcConn *CryptServiceConn) SaveCommandResult(req SaveCommandResultReq, _ *DummyAttr) error {
+	rpcConn.Svc.KeyDB.UpdateCommandResult(req.UUID, rpcConn.RemoteAddr, req.CommandContent, req.Result)
 	return nil
 }

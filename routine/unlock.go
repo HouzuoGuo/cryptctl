@@ -148,7 +148,7 @@ func AutoOnlineUnlockFS(progressOut io.Writer, client *keyserv.CryptClient, uuid
 	sys.LockMem()
 	// Find out UUID of the block device
 	blkDevs := fs.GetBlockDevices()
-	blkDev, found := blkDevs.GetByCriteria(uuid, "", "", "", "")
+	blkDev, found := blkDevs.GetByCriteria(uuid, "", "", "", "", "", "")
 	if !found {
 		return fmt.Errorf("AutoOnlineUnlockFS: failed to get information of \"%s\"", uuid)
 	} else if !blkDev.IsLUKSEncrypted() {
@@ -241,12 +241,12 @@ This process renders all data on the disk irreversibly lost.
 func EraseKey(progressOut io.Writer, client *keyserv.CryptClient, password, uuid string) error {
 	// Find the device node and erase the encryption metadata
 	blkDevs := fs.GetBlockDevices()
-	hostDev, foundHost := blkDevs.GetByCriteria(uuid, "", "", "", "")
+	hostDev, foundHost := blkDevs.GetByCriteria(uuid, "", "", "", "", "", "")
 	if !foundHost {
 		return fmt.Errorf("EraseKey: cannot find a block device corresponding to UUID \"%s\"", uuid)
 	}
 	unlockedDevPath := MakeDeviceMapperName(hostDev.Path)
-	unlockedDev, foundUnlocked := blkDevs.GetByCriteria("", path.Join("/dev/mapper", unlockedDevPath), "", "", "")
+	unlockedDev, foundUnlocked := blkDevs.GetByCriteria("", path.Join("/dev/mapper", unlockedDevPath), "", "", "", "", "")
 	if foundUnlocked {
 		// Unmount and close it before erasing the data
 		if unlockedDev.MountPoint != "" {

@@ -95,11 +95,19 @@ func SystemctlGetMainPID(svc string) (mainPID int) {
 	return
 }
 
-// Cal systemctl disable and then systemctl stop on thing. Panic on error.
+// SystemctlStop uses systemctl command to disable and stop a service.
 func SystemctlDisableStop(svc string) error {
 	if out, err := exec.Command("systemctl", "disable", svc).CombinedOutput(); err != nil {
 		return fmt.Errorf("Failed to disable service \"%s\" -  %v %s", svc, err, out)
 	}
+	if out, err := exec.Command("systemctl", "stop", svc).CombinedOutput(); err != nil {
+		return fmt.Errorf("Failed to stop service \"%s\" -  %v %s", svc, err, out)
+	}
+	return nil
+}
+
+// SystemctlStop uses systemctl command to stop a service.
+func SystemctlStop(svc string) error {
 	if out, err := exec.Command("systemctl", "stop", svc).CombinedOutput(); err != nil {
 		return fmt.Errorf("Failed to stop service \"%s\" -  %v %s", svc, err, out)
 	}

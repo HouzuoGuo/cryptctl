@@ -5,15 +5,18 @@ package command
 import (
 	"errors"
 	"fmt"
+	"github.com/HouzuoGuo/cryptctl/fs"
 	"github.com/HouzuoGuo/cryptctl/keydb"
 	"github.com/HouzuoGuo/cryptctl/keyserv"
 	"github.com/HouzuoGuo/cryptctl/routine"
 	"github.com/HouzuoGuo/cryptctl/sys"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -58,6 +61,8 @@ The encryption sequence will carry out the following tasks:
 	MSG_ERASE_UUID_AGAIN      = "Warning! Data on \"%s\" will be irreversibly lost, type the UUID once again to confirm"
 	MSG_E_ERASE_UUID_MISMATCH = "UUID input does not match."
 	MSG_E_ERASE_NO_CONF       = "The erase operation must contact key server in order to erase a key, but cryptctl configuration is empty."
+
+	ClientDaemonService = "cryptctl-client"
 )
 
 // Prompt user to enter key server's CA file, host name, and port. Defaults are provided by existing configuration.
@@ -159,7 +164,14 @@ func EncryptFS() error {
 	}
 
 	// Activate systemd service for the now encrypted disk so that alive messages are sent
-	return sys.SystemctlStart(AUTO_UNLOCK_DAEMON + uuid)
+	if err := sys.SystemctlStart(AUTO_UNLOCK_DAEMON + uuid); err != nil {
+		return fmt.Errorf("Failed to start background daemon that reports disk status - %v", err)
+	}
+	// Activate and enable client daemon that polls for pending messages
+	if err := sys.SystemctlEnableStart(ClientDaemonService); err != nil {
+		return fmt.Errorf("Failed to start cryptctl client daemon - %v", err)
+	}
+	return nil
 }
 
 // Sub-command: forcibly unlock all file systems that have their keys on a key server.
@@ -260,4 +272,119 @@ func EraseKey() error {
 		return err
 	}
 	return nil
+}
+
+/*
+ClientDaemon runs the main routine of "client-daemon" sub-command.
+The routine primarily polls for pending commands and execute them.
+*/
+func ClientDaemon() error {
+	sys.LockMem()
+	sysconf, err := sys.ParseSysconfigFile(CLIENT_CONFIG_PATH, false)
+	if err != nil {
+		return err
+	}
+	if sysconf.GetString(keyserv.CLIENT_CONF_HOST, "") == "" {
+		fmt.Println(MSG_UNLOCK_IS_NOP)
+		return nil
+	}
+	client, err := keyserv.NewCryptClientFromSysconfig(sysconf)
+	if err != nil {
+		return err
+	}
+	log.Printf("Going to poll for commands from server %s every 30 seconds.", client.Address)
+	for {
+		time.Sleep(30 * time.Second)
+
+		devs := fs.GetBlockDevices()
+		uuids := make([]string, 0, len(devs))
+		for _, dev := range devs {
+			if dev.UUID != "" {
+				uuids = append(uuids, dev.UUID)
+			}
+		}
+
+		resp, err := client.PollCommand(keyserv.PollCommandReq{UUIDs: uuids})
+		if err != nil {
+			log.Printf("Failed to poll for pending commands: %v", err)
+			continue
+		}
+		for uuid, cmds := range resp.Commands {
+			for _, cmd := range cmds {
+				if cmd.IsValid() {
+					log.Printf("Going to execute command %+v", cmd)
+					ExecutePendingCommand(client, uuid, cmd)
+				} else {
+					log.Printf("Ignoring expired command: %+v\n", cmd)
+				}
+			}
+		}
+
+	}
+}
+
+/*
+UmountCryptDev un-mounts and closes the crypt block device associated with the block device specified in UUID.
+Returns human-readable result text.
+*/
+func UmountCryptDev(uuid string) string {
+	/*
+		First steps should umount and close the disk.
+		At very last, if no errors are encountered, stop reporting alive-messages.
+	*/
+	devs := fs.GetBlockDevices()
+	underlyingDev, found := devs.GetByCriteria(uuid, "", "", "", "", "", "")
+	if !found {
+		return "The disk disappeared from system"
+	}
+	cryptDev, found := devs.GetByCriteria("", "", "crypt", "", "", underlyingDev.Name, "")
+	if !found {
+		return "The disk is not unlocked to begin with"
+	}
+	if cryptDev.MountPoint == "" {
+		return "The disk is not mounted to begin with"
+	}
+	time.Sleep(3 * time.Second)
+	log.Printf("Umount %s ...", cryptDev.MountPoint)
+	if err := fs.Umount(cryptDev.MountPoint); err != nil {
+		return fmt.Sprintf("Failed to umount encrypted device - %v", err)
+	}
+	time.Sleep(3 * time.Second)
+	log.Printf("Closing down %s ...", cryptDev.Path)
+	if err := fs.CryptClose(cryptDev.Path); err != nil {
+		return fmt.Sprintf("Failed to close encrypted device - %v", err)
+	}
+	serviceName := AUTO_UNLOCK_DAEMON + uuid
+	if err := sys.SystemctlStop(AUTO_UNLOCK_DAEMON + uuid); err != nil {
+		return fmt.Sprintf("failed to stop service %s - %v", serviceName, err)
+	}
+	return "Success"
+}
+
+/*
+ExecutePendingCommand is called by client daemon to execute a freshly polled pending command.
+Execution result is logged into
+*/
+func ExecutePendingCommand(client *keyserv.CryptClient, uuid string, cmd keydb.PendingCommand) {
+	result := "Success"
+	if cmd.Content == PendingCommandMount {
+		// Mounting an already mounted disk will result in a failure and no other negative consequence
+		if err := sys.SystemctlStart(AUTO_UNLOCK_DAEMON + uuid); err != nil {
+			result = fmt.Sprintf("Failed to start background daemon that reports disk status - %v", err)
+		}
+	} else if cmd.Content == PendingCommandUmount {
+		// Similar to mount, umount a disk that is not mounted is a failure and results in no other negative consequence.
+		result = UmountCryptDev(uuid)
+	} else {
+		result = fmt.Sprintf("Client does not understand command \"%v\"", cmd.Content)
+	}
+	log.Printf("ExecutePendingCommand: result is %s", result)
+	if err := client.SaveCommandResult(keyserv.SaveCommandResultReq{
+		UUID:           uuid,
+		CommandContent: cmd.Content,
+		Result:         result,
+	}); err != nil {
+		log.Printf("ExecutePendingCommand: failed to save command result - %v", err)
+	}
+	return
 }
