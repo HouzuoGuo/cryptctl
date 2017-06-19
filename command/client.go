@@ -195,7 +195,7 @@ func ManOfflineUnlockFS() error {
 	if newMountOptions := sys.Input(false, rec.GetMountOptionStr(), MSG_ASK_MOUNT_OPT); newMountOptions != "" {
 		rec.MountOptions = strings.Split(newMountOptions, ",")
 	}
-	return routine.UnlockFS(os.Stdout, rec)
+	return routine.UnlockFS(os.Stderr, rec, 3)
 }
 
 /*
@@ -220,7 +220,7 @@ func AutoOnlineUnlockFS(uuid string) error {
 	if err := routine.AutoOnlineUnlockFS(os.Stdout, client, uuid, ONLINE_UNLOCK_RETRY_SEC); err != nil {
 		return err
 	}
-	return routine.ReportAlive(os.Stdout, client, uuid)
+	return routine.ReportAlive(os.Stderr, client, uuid)
 }
 
 /*

@@ -131,6 +131,7 @@ func TestEncryptDecrypt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
+		log.Println("TestEncryptDecrypt is cleaning up")
 		// Clean up!
 		if err := fs.Umount(srcDir1); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -362,16 +363,21 @@ func TestEncryptDecrypt(t *testing.T) {
 	finishedReportAlive.Add(3) // two for loop0, one for loop1.
 	for i := 0; i < 2; i++ {
 		go func(i int) {
+			log.Printf("About to run auto-unlock routine #%d on disk %s", i, loop0Dev.UUID)
 			err := AutoOnlineUnlockFS(os.Stdout, client, loop0Dev.UUID, REPORT_ALIVE_INTERVAL_SEC*2)
 			// Once key is retrieved successfully, begin sending alive messages.
 			if err == nil {
-				go func() {
+				log.Printf("Auto-unlock routine #%d of disk %s succeeded, going to send keep-alive in background.", i, loop0Dev.UUID)
+				go func(i int) {
 					if aliveErr := ReportAlive(os.Stdout, client, loop0Dev.UUID); aliveErr != nil && !reportAliveMayEnd {
+						log.Printf("Keep-alive routine #%d of disk %s terminated - %v", i, loop0Dev.UUID, aliveErr)
 						t.Log(aliveErr)
 					} else {
 						finishedReportAlive.Done()
 					}
-				}()
+				}(i)
+			} else {
+				log.Printf("Auto-unlock routine #%d of disk %s failed - %v", i, loop0Dev.UUID, err)
 			}
 			onlineUnlockAttempt[i] <- err
 		}(i)
@@ -423,9 +429,15 @@ func TestEncryptDecrypt(t *testing.T) {
 	}
 	checkSecret0()
 	checkSecret1()
-	// Alive messages should have been sent by ReportAlive
-	if msgs := srv.KeyDB.RecordsByUUID[loop0Dev.UUID].AliveMessages["127.0.0.1"]; len(msgs) == 0 {
-		t.Fatal(msgs)
+	// Alive messages should have been sent by ReportAlive, the map should have one host and more than one messages from the host.
+	aliveMessages := srv.KeyDB.RecordsByUUID[loop0Dev.UUID].AliveMessages
+	if len(aliveMessages) == 0 {
+		t.Fatal(aliveMessages)
+	}
+	for _, hostAliveMessages := range aliveMessages {
+		if len(hostAliveMessages) == 0 {
+			t.Fatal(aliveMessages)
+		}
 	}
 	// Sending alive message to non-existing reports should result in immediate rejection
 	if ReportAlive(os.Stdout, client, "this-uuid-does-not-exist") == nil {
@@ -494,7 +506,7 @@ func TestEncryptDecrypt(t *testing.T) {
 	for _, record := range srv.KeyDB.RecordsByUUID {
 		records = append(records, record)
 		fmt.Println("Offline-unlocking", record.MountPoint, record.UUID)
-		if err := UnlockFS(os.Stdout, record); err != nil {
+		if err := UnlockFS(os.Stdout, record, 3); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -508,7 +520,7 @@ func TestEncryptDecrypt(t *testing.T) {
 		MountPoint:   "/tmp",
 		MountOptions: []string{},
 	}
-	if err := UnlockFS(os.Stdout, bogusRecord); err == nil {
+	if err := UnlockFS(os.Stdout, bogusRecord, 3); err == nil {
 		t.Fatal("did not error")
 	}
 	checkSecret0()
@@ -559,10 +571,10 @@ func TestEncryptDecrypt(t *testing.T) {
 	}
 
 	// Now those records won't be able to unlock disks anymore
-	if err := UnlockFS(os.Stdout, records[0]); err == nil {
+	if err := UnlockFS(os.Stdout, records[0], 3); err == nil {
 		t.Fatal("did not error")
 	}
-	if err := UnlockFS(os.Stdout, records[1]); err == nil {
+	if err := UnlockFS(os.Stdout, records[1], 3); err == nil {
 		t.Fatal("did not error")
 	}
 
