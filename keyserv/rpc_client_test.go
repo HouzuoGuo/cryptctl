@@ -180,11 +180,6 @@ func TestRPCCalls(t *testing.T) {
 		time.Sleep(1 * time.Second)
 	}
 
-	// Reload server
-	if err := client.ReloadDB(); err != nil {
-		t.Fatal(err)
-	}
-
 	// Delete key
 	if err := client.EraseKey(EraseKeyReq{
 		Password: HashPassword(salt, "wrong password"),

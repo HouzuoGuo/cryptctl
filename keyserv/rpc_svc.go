@@ -28,9 +28,9 @@ import (
 )
 
 const (
-	LEN_PASS_SALT          = 64   // length of random salt to go with each password
-	LEN_SHUTDOWN_CHALLENGE = 64   // length of the random challenge that must be verified in order to shut down server
-	SRV_DEFAULT_PORT       = 3737 // default port for the key server to listen on
+	LenAdminChallenge = 64   // length of the random challenge that must be verified in order to shutdown server
+	LEN_PASS_SALT     = 64   // length of random salt to go with each password
+	SRV_DEFAULT_PORT  = 3737 // default port for the key server to listen on
 
 	SRV_CONF_PASS_HASH           = "AUTH_PASSWORD_HASH"
 	SRV_CONF_PASS_SALT           = "AUTH_PASSWORD_SALT"
@@ -175,7 +175,7 @@ type CryptServer struct {
 	Listener          net.Listener       // listener for client connections
 	BuiltInKMIPServer *KMIPServer        // Built-in KMIP server in case there's no external server
 	KMIPClient        *KMIPClient        // KMIP client connected to either built-in KMIP server or external server
-	ShutdownChallenge []byte             // a random secret that must be verified for incoming shutdown requests
+	AdminChallenge    []byte             // a random secret that must be verified for incoming shutdown/reload requests
 }
 
 // Initialise an RPC server from sysconfig file text.
@@ -209,9 +209,9 @@ func NewCryptServer(config CryptServiceConfig, mailer Mailer) (srv *CryptServer,
 		srv.TLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
 	}
 	srv.TLSConfig.BuildNameToCertificate()
-	// Shutdown challenge is an array of random bytes
-	srv.ShutdownChallenge = make([]byte, LEN_SHUTDOWN_CHALLENGE)
-	if _, err = rand.Read(srv.ShutdownChallenge); err != nil {
+	// Admin challenge is an array of random bytes
+	srv.AdminChallenge = make([]byte, LenAdminChallenge)
+	if _, err = rand.Read(srv.AdminChallenge); err != nil {
 		return
 	}
 	return
@@ -634,25 +634,14 @@ func (rpcConn *CryptServiceConn) EraseKey(req EraseKeyReq, _ *DummyAttr) error {
 	return dbErr
 }
 
-// Reload key database into memory. This function can only be called from 127.0.0.1. No password is required.
-func (rpcConn *CryptServiceConn) ReloadDB(_ DummyAttr, _ *DummyAttr) error {
-	if rpcConn.RemoteAddr != "127.0.0.1" {
-		return errors.New("ReloadDB: remote IP is not 127.0.0.1")
-	}
-	return rpcConn.Svc.KeyDB.ReloadDB()
-}
-
 // A request to shut down the server so that it stops accepting connections.
 type ShutdownReq struct {
 	Challenge []byte
 }
 
-// Shut down the server's listener. This function can only be called from 127.0.0.1 with a correct secret challenge.
+// Shut down the server's listener.
 func (rpcConn *CryptServiceConn) Shutdown(req ShutdownReq, _ *DummyAttr) error {
-	if rpcConn.RemoteAddr != "127.0.0.1" {
-		return errors.New("Shutdown: remote IP is not 127.0.0.1")
-	}
-	if subtle.ConstantTimeCompare(rpcConn.Svc.ShutdownChallenge, req.Challenge) != 1 {
+	if subtle.ConstantTimeCompare(rpcConn.Svc.AdminChallenge, req.Challenge) != 1 {
 		return errors.New("Shutdown: incorrect challenge")
 	}
 	err := rpcConn.Svc.Listener.Close()

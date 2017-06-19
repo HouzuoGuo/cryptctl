@@ -306,7 +306,7 @@ func TestEncryptDecrypt(t *testing.T) {
 
 	// Shut down the server, start it once more and try unlocking the disks.
 	resetDisks()
-	if err := client.Shutdown(keyserv.ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
+	if err := client.Shutdown(keyserv.ShutdownReq{Challenge: srv.AdminChallenge}); err != nil {
 		t.Fatal(err)
 	}
 	srv, err = keyserv.NewCryptServer(srvConf, mailer)
@@ -348,7 +348,7 @@ func TestEncryptDecrypt(t *testing.T) {
 		t.Fatal(loop1Dev.UUID, encUUID1)
 	}
 	// Temporarily shut down server while requesting to unlock disks via automated method (not manual method)
-	if err := client.Shutdown(keyserv.ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
+	if err := client.Shutdown(keyserv.ShutdownReq{Challenge: srv.AdminChallenge}); err != nil {
 		t.Fatal(err)
 	}
 	// Six unlock attempts will be made against different disks
@@ -566,7 +566,7 @@ func TestEncryptDecrypt(t *testing.T) {
 		t.Fatal("did not error")
 	}
 
-	if err := client.Shutdown(keyserv.ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
+	if err := client.Shutdown(keyserv.ShutdownReq{Challenge: srv.AdminChallenge}); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -170,14 +170,6 @@ func (client *CryptClient) EraseKey(req EraseKeyReq) error {
 	})
 }
 
-// Tell server to reload key database into memory.
-func (client *CryptClient) ReloadDB() error {
-	return client.DoRPC(func(rpcClient *rpc.Client) error {
-		var dummy DummyAttr
-		return rpcClient.Call(fmt.Sprintf(RPCObjNameFmt, "ReloadDB"), false, &dummy)
-	})
-}
-
 // Shut down server's listener.
 func (client *CryptClient) Shutdown(req ShutdownReq) error {
 	return client.DoRPC(func(rpcClient *rpc.Client) error {
@@ -239,7 +231,7 @@ func StartTestServer(tb testing.TB) (*CryptClient, func(testing.TB)) {
 		return nil, nil
 	}
 	tearDown := func(t testing.TB) {
-		if err := client.Shutdown(ShutdownReq{Challenge: srv.ShutdownChallenge}); err != nil {
+		if err := client.Shutdown(ShutdownReq{Challenge: srv.AdminChallenge}); err != nil {
 			t.Fatal(err)
 			return
 		}
