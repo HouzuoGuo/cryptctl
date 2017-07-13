@@ -369,10 +369,18 @@ func (srv *CryptServer) ValidatePassword(pass HashedPassword) error {
 }
 
 // Create an RPC service object that handles requests from an incoming connection.
-func (srv *CryptServer) ServeConn(incoming net.Conn) (rpcSvc *rpc.Server) {
-	rpcSvc = rpc.NewServer()
-	remoteIP := strings.Split(incoming.RemoteAddr().String(), ":")
-	if err := rpcSvc.Register(&CryptServiceConn{RemoteAddr: remoteIP[0], Svc: srv}); err != nil {
+func (srv *CryptServer) ServeConn(incoming net.Conn) {
+	rpcSvc := rpc.NewServer()
+	remoteHost, _, err := net.SplitHostPort(incoming.RemoteAddr().String())
+	if err != nil {
+		log.Printf("CryptServer.ServeConn: failed to parse weird looking address - %v", err)
+		return
+	}
+	// Turn IPv6 localhost address into IPv4 address to aid in several test cases that rely on 127.0.0.1 being localhost
+	if remoteHost == "::1" {
+		remoteHost = "127.0.0.1"
+	}
+	if err := rpcSvc.Register(&CryptServiceConn{RemoteHost: remoteHost, Svc: srv}); err != nil {
 		log.Panicf("ServeConn: failed to register RPC service - %v", err)
 	}
 	rpcSvc.ServeConn(incoming)
@@ -381,7 +389,7 @@ func (srv *CryptServer) ServeConn(incoming net.Conn) (rpcSvc *rpc.Server) {
 
 // Serve RPC routines for key creation/retrieval services.
 type CryptServiceConn struct {
-	RemoteAddr string
+	RemoteHost string
 	Svc        *CryptServer
 }
 
@@ -487,17 +495,17 @@ func (rpcConn *CryptServiceConn) CreateKey(req CreateKeyReq, resp *CreateKeyResp
 	journalRec.Key = nil
 	// Always log the event to system journal
 	log.Printf(`CryptServiceConn.CreateKey: %s (%s) has saved new key %s`,
-		rpcConn.RemoteAddr, req.Hostname, journalRec.FormatAttrs(" "))
+		rpcConn.RemoteHost, req.Hostname, journalRec.FormatAttrs(" "))
 	// Send optional notification email in background
 	if rpcConn.Svc.Mailer.ValidateConfig() == nil {
 		go func() {
 			// Put IP and mount point in subject and key record details in text
 			subject := fmt.Sprintf("%s - %s (%s) %s", rpcConn.Svc.Config.KeyCreationSubject,
-				rpcConn.RemoteAddr, req.Hostname, journalRec.MountPoint)
+				rpcConn.RemoteHost, req.Hostname, journalRec.MountPoint)
 			text := fmt.Sprintf("%s\r\n\r\n%s", rpcConn.Svc.Config.KeyCreationGreeting, journalRec.FormatAttrs("\r\n"))
 			if err := rpcConn.Svc.Mailer.Send(subject, text); err != nil {
 				log.Printf("CryptServiceConn.CreateKey: failed to send email notification after saving %s (%s)'s key of %s - %v",
-					rpcConn.RemoteAddr, req.Hostname, journalRec.MountPoint, err)
+					rpcConn.RemoteHost, req.Hostname, journalRec.MountPoint, err)
 			}
 		}()
 	}
@@ -514,25 +522,25 @@ func (rpcConn *CryptServiceConn) logRetrieval(uuids []string, hostname string, g
 	}
 	if len(granted) > 0 {
 		log.Printf(`CryptServiceConn.logRetrieval: %s (%s) has been granted keys of: %s`,
-			rpcConn.RemoteAddr, hostname, strings.Join(retrievedUUIDs, " "))
+			rpcConn.RemoteHost, hostname, strings.Join(retrievedUUIDs, " "))
 	}
 	if len(rejected) > 0 {
 		log.Printf(`CryptServiceConn.logRetrieval: %s (%s) has been rejected keys of: %s`,
-			rpcConn.RemoteAddr, hostname, strings.Join(rejected, " "))
+			rpcConn.RemoteHost, hostname, strings.Join(rejected, " "))
 	}
 	// There is really no need to log the missing keys
 	// Send optional notification email in background
 	if rpcConn.Svc.Mailer.ValidateConfig() == nil && len(granted) > 0 {
 		go func(granted map[string]keydb.Record) {
 			// Put IP + host name in subject and UUID + mount point in text
-			subject := fmt.Sprintf("%s - %s %s", rpcConn.Svc.Config.KeyRetrievalSubject, rpcConn.RemoteAddr, hostname)
+			subject := fmt.Sprintf("%s - %s %s", rpcConn.Svc.Config.KeyRetrievalSubject, rpcConn.RemoteHost, hostname)
 			text := fmt.Sprintf("%s\r\n\r\n", rpcConn.Svc.Config.KeyRetrievalGreeting)
 			for uuid, record := range granted {
 				text += fmt.Sprintf("%s - %s\r\n", uuid, record.MountPoint)
 			}
 			if err := rpcConn.Svc.Mailer.Send(subject, text); err != nil {
 				log.Printf("CryptServiceConn.logRetrieval: failed to send email notification after granting keys to %s (%s) - %v",
-					rpcConn.RemoteAddr, hostname, err)
+					rpcConn.RemoteHost, hostname, err)
 			}
 		}(granted)
 	}
@@ -567,7 +575,7 @@ func (rpcConn *CryptServiceConn) askForKeyContent(kmipID string) (key []byte, er
 func (rpcConn *CryptServiceConn) AutoRetrieveKey(req AutoRetrieveKeyReq, resp *AutoRetrieveKeyResp) error {
 	// Retrieve the keys and write down who retrieved it
 	requester := keydb.AliveMessage{
-		IP:        rpcConn.RemoteAddr,
+		IP:        rpcConn.RemoteHost,
 		Hostname:  req.Hostname,
 		Timestamp: time.Now().Unix(),
 	}
@@ -605,7 +613,7 @@ func (rpcConn *CryptServiceConn) ManualRetrieveKey(req ManualRetrieveKeyReq, res
 	}
 	// Retrieve the keys and write down who retrieved it
 	requester := keydb.AliveMessage{
-		IP:        rpcConn.RemoteAddr,
+		IP:        rpcConn.RemoteHost,
 		Hostname:  req.Hostname,
 		Timestamp: time.Now().Unix(),
 	}
@@ -636,7 +644,7 @@ consider it eligible to hold the keys.
 */
 func (rpcConn *CryptServiceConn) ReportAlive(req ReportAliveReq, rejectedUUIDs *[]string) error {
 	requester := keydb.AliveMessage{
-		IP:        rpcConn.RemoteAddr,
+		IP:        rpcConn.RemoteHost,
 		Hostname:  req.Hostname,
 		Timestamp: time.Now().Unix(),
 	}
@@ -725,7 +733,7 @@ func (rpcConn *CryptServiceConn) PollCommand(req PollCommandReq, resp *PollComma
 			// Not-found UUID is not an error condition
 			continue
 		}
-		cmds, found := rec.PendingCommands[rpcConn.RemoteAddr]
+		cmds, found := rec.PendingCommands[rpcConn.RemoteHost]
 		if !found || len(cmds) == 0 {
 			// There are no pending commands for this IP
 			continue
@@ -738,7 +746,7 @@ func (rpcConn *CryptServiceConn) PollCommand(req PollCommandReq, resp *PollComma
 				// Respond with the oldest yet still valid pending command of the record
 				resp.Commands[uuid] = append(resp.Commands[uuid], cmd)
 				// The command is now "seen" by client.
-				rpcConn.Svc.KeyDB.UpdateSeenFlag(uuid, rpcConn.RemoteAddr, cmd.Content)
+				rpcConn.Svc.KeyDB.UpdateSeenFlag(uuid, rpcConn.RemoteHost, cmd.Content)
 				counter++
 				break
 			}
@@ -756,6 +764,6 @@ type SaveCommandResultReq struct {
 
 // SaveCommandResult saves execution result of a pending command.
 func (rpcConn *CryptServiceConn) SaveCommandResult(req SaveCommandResultReq, _ *DummyAttr) error {
-	rpcConn.Svc.KeyDB.UpdateCommandResult(req.UUID, rpcConn.RemoteAddr, req.CommandContent, req.Result)
+	rpcConn.Svc.KeyDB.UpdateCommandResult(req.UUID, rpcConn.RemoteHost, req.CommandContent, req.Result)
 	return nil
 }
