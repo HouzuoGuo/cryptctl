@@ -3,7 +3,6 @@
 package keydb
 
 import (
-	"fmt"
 	"os"
 	"reflect"
 	"testing"
@@ -287,26 +286,30 @@ func TestDB_UpdateSeenFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	start := time.Now()
+
 	recA := db.RecordsByUUID["a"]
+	// Record 1 is valid
 	recA.AddPendingCommand("1.1.1.1", PendingCommand{
-		ValidFrom: time.Unix(1, 0),
+		ValidFrom: start,
 		Validity:  10 * time.Hour,
 		IP:        "1.1.1.1",
 		Content:   "1st command",
 	})
+	// Record 2 is expired
 	recA.AddPendingCommand("1.1.1.1", PendingCommand{
-		ValidFrom: time.Unix(1, 0),
+		ValidFrom: start.Add(-11 * time.Hour),
 		Validity:  10 * time.Hour,
 		IP:        "1.1.1.1",
 		Content:   "2nd command",
 	})
+	// Record 3 is valid
 	recA.AddPendingCommand("2.2.2.2", PendingCommand{
-		ValidFrom: time.Unix(1, 0),
+		ValidFrom: start,
 		Validity:  10 * time.Hour,
 		IP:        "2.2.2.2",
 		Content:   "3rd command",
 	})
-	fmt.Printf("%+v\n", recA)
 	db.RecordsByUUID["a"] = recA
 
 	db.UpdateSeenFlag("a", "1.1.1.1", "1st command")
@@ -316,24 +319,16 @@ func TestDB_UpdateSeenFlag(t *testing.T) {
 	expected := map[string][]PendingCommand{
 		"1.1.1.1": {
 			{
-				ValidFrom:    time.Unix(1, 0),
+				ValidFrom:    start,
 				Validity:     10 * time.Hour,
 				IP:           "1.1.1.1",
 				Content:      "1st command",
 				SeenByClient: true,
 			},
-			{
-				ValidFrom:    time.Unix(1, 0),
-				Validity:     10 * time.Hour,
-				IP:           "1.1.1.1",
-				Content:      "2nd command",
-				SeenByClient: true,
-				ClientResult: "success",
-			},
 		},
 		"2.2.2.2": {
 			{
-				ValidFrom:    time.Unix(1, 0),
+				ValidFrom:    start,
 				Validity:     10 * time.Hour,
 				IP:           "2.2.2.2",
 				Content:      "3rd command",
