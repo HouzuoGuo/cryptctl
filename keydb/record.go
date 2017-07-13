@@ -136,15 +136,16 @@ func (rec *Record) RemoveExpiredPendingCommands() {
 	}
 }
 
-// AddPendingCommand stores a command associated to the input IP address.
+// AddPendingCommand stores a command associated to the input IP address, and clears expired pending commands along the way.
 func (rec *Record) AddPendingCommand(ip string, cmd PendingCommand) {
+	rec.RemoveExpiredPendingCommands()
 	if _, found := rec.PendingCommands[ip]; !found {
 		rec.PendingCommands[ip] = make([]PendingCommand, 0, 4)
 	}
 	rec.PendingCommands[ip] = append(rec.PendingCommands[ip], cmd)
 }
 
-// ClearPendingCommands removes all pending commands.
+// ClearPendingCommands removes all pending commands, and clears expired pending commands along the way.
 func (rec *Record) ClearPendingCommands() {
 	rec.PendingCommands = make(map[string][]PendingCommand)
 }

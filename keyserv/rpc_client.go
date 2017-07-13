@@ -209,11 +209,11 @@ func (client *CryptClient) SaveCommandResult(req SaveCommandResultReq) error {
 }
 
 // Start an RPC server in a testing configuration, return a client connected to the server and a teardown function.
-func StartTestServer(tb testing.TB) (*CryptClient, func(testing.TB)) {
+func StartTestServer(tb testing.TB) (*CryptClient, *CryptServer, func(testing.TB)) {
 	keydbDir, err := ioutil.TempDir("", "cryptctl-rpctest")
 	if err != nil {
 		tb.Fatal(err)
-		return nil, nil
+		return nil, nil, nil
 	}
 	// Fill in configuration blanks (listen port is left at default)
 	salt := NewSalt()
@@ -230,11 +230,11 @@ func StartTestServer(tb testing.TB) (*CryptClient, func(testing.TB)) {
 	srv, err := NewCryptServer(srvConf, Mailer{})
 	if err != nil {
 		tb.Fatal(err)
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err := srv.ListenTCP(); err != nil {
 		tb.Fatal(err)
-		return nil, nil
+		return nil, nil, nil
 	}
 	go srv.HandleTCPConnections()
 	// The test certificate's CN is "localhost"
@@ -244,7 +244,7 @@ func StartTestServer(tb testing.TB) (*CryptClient, func(testing.TB)) {
 	client, err := NewCryptClient("tcp", "localhost:3737", certContent, "", "")
 	if err != nil {
 		tb.Fatal(err)
-		return nil, nil
+		return nil, nil, nil
 	}
 	client.tlsConfig.InsecureSkipVerify = true
 	// Server should start within about 2 seconds
@@ -258,7 +258,7 @@ func StartTestServer(tb testing.TB) (*CryptClient, func(testing.TB)) {
 	}
 	if !serverReady {
 		tb.Fatal("server did not start in time")
-		return nil, nil
+		return nil, nil, nil
 	}
 	tearDown := func(t testing.TB) {
 		if err := client.Shutdown(ShutdownReq{Challenge: srv.AdminChallenge}); err != nil {
@@ -274,5 +274,5 @@ func StartTestServer(tb testing.TB) (*CryptClient, func(testing.TB)) {
 			return
 		}
 	}
-	return client, tearDown
+	return client, srv, tearDown
 }

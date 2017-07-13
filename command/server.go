@@ -546,8 +546,6 @@ func SendCommand() error {
 	expireMin := sys.InputInt(true, 10, 1, 10080, "In how many minutes does the command expire (including the result)?")
 	// Place the new pending command into database record
 	rec, _ := db.GetByUUID(uuid)
-	rec.RemoveDeadHosts()
-	rec.RemoveExpiredPendingCommands()
 	rec.AddPendingCommand(ip, keydb.PendingCommand{
 		ValidFrom: time.Now(),
 		Validity:  time.Duration(expireMin) * time.Minute,
@@ -584,7 +582,6 @@ func ClearPendingCommands() error {
 		return err
 	}
 	rec, _ := db.GetByUUID(uuid)
-	rec.RemoveDeadHosts()
 	rec.ClearPendingCommands()
 	if _, err := db.Upsert(rec); err != nil {
 		return fmt.Errorf("Failed to update database record - %v", err)

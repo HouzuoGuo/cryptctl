@@ -8,7 +8,6 @@ import (
 	"github.com/HouzuoGuo/cryptctl/sys"
 	"path"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -35,7 +34,7 @@ func TestCreateKeyReq_Validate(t *testing.T) {
 }
 
 func TestRPCCalls(t *testing.T) {
-	client, tearDown := StartTestServer(t)
+	client, _, tearDown := StartTestServer(t)
 	defer tearDown(t)
 	// Retrieve server's password salt
 	salt, err := client.GetSalt()
@@ -224,153 +223,109 @@ func TestRPCCalls(t *testing.T) {
 	fmt.Println("About to run teardown")
 }
 
-func BenchmarkSaveKey(b *testing.B) {
-	client, tearDown := StartTestServer(b)
-	defer tearDown(b)
-	// Retrieve server's password salt
+func TestPendingCommands(t *testing.T) {
+	client, server, tearDown := StartTestServer(t)
+	defer tearDown(t)
+	// Create a key that will host pending commands
 	salt, err := client.GetSalt()
 	if err != nil {
-		b.Fatal(err)
+		t.Fatal(err)
 	}
-	// Run all transactions in a single goroutine
-	oldMaxprocs := runtime.GOMAXPROCS(-1)
-	defer runtime.GOMAXPROCS(oldMaxprocs)
-	runtime.GOMAXPROCS(1)
-	b.ResetTimer()
-	// The benchmark will run all RPC operations consecutively
-	for i := 0; i < b.N; i++ {
-		if _, err := client.CreateKey(CreateKeyReq{
-			Password:         HashPassword(salt, TEST_RPC_PASS),
-			Hostname:         "localhost",
-			UUID:             "aaa",
-			MountPoint:       "/a",
-			MountOptions:     []string{"ro", "noatime"},
-			MaxActive:        -1,
-			AliveIntervalSec: 1,
-			AliveCount:       4,
-		}); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-}
-
-func BenchmarkAutoRetrieveKey(b *testing.B) {
-	client, tearDown := StartTestServer(b)
-	defer tearDown(b)
-	// Retrieve server's password salt
-	salt, err := client.GetSalt()
-	if err != nil {
-		b.Fatal(err)
-	}
-	// Run all transactions in a single goroutine
-	oldMaxprocs := runtime.GOMAXPROCS(-1)
-	defer runtime.GOMAXPROCS(oldMaxprocs)
-	runtime.GOMAXPROCS(1)
-	if _, err := client.CreateKey(CreateKeyReq{
+	client.CreateKey(CreateKeyReq{
 		Password:         HashPassword(salt, TEST_RPC_PASS),
 		Hostname:         "localhost",
-		UUID:             "aaa",
-		MountPoint:       "/a",
-		MountOptions:     []string{"ro", "noatime"},
-		MaxActive:        -1,
+		UUID:             "a-a-a-a",
+		MountPoint:       "/",
+		MountOptions:     []string{},
+		MaxActive:        1,
 		AliveIntervalSec: 1,
-		AliveCount:       4,
+		AliveCount:       1,
+	})
+	// Initially, there are no pending commands to be polled.
+	cmds, err := client.PollCommand(PollCommandReq{
+		UUIDs: []string{"a-a-a-a", "this-does-not-exist"},
+	})
+	if err != nil || len(cmds.Commands) > 0 {
+		t.Fatal(err, cmds.Commands)
+	}
+	// Save four pending commands - first command is still valid and unseen
+	rec, _ := server.KeyDB.GetByUUID("a-a-a-a")
+	cmd1 := keydb.PendingCommand{
+		ValidFrom: time.Now(),
+		Validity:  10 * time.Hour,
+		IP:        "127.0.0.1",
+		Content:   "1",
+	}
+	rec.AddPendingCommand("127.0.0.1", cmd1)
+	// Second command is expired
+	rec.AddPendingCommand("127.0.0.1", keydb.PendingCommand{
+		ValidFrom: time.Now().Add(-1 * time.Hour),
+		Validity:  1 * time.Minute,
+		IP:        "127.0.0.1",
+		Content:   "2",
+	})
+	// Third command is valid but already seen
+	rec.AddPendingCommand("127.0.0.1", keydb.PendingCommand{
+		ValidFrom:    time.Now(),
+		Validity:     10 * time.Hour,
+		IP:           "127.0.0.1",
+		Content:      "3",
+		SeenByClient: true,
+	})
+	// Fouth command has nothing to do with this computer
+	rec.AddPendingCommand("another-computer", keydb.PendingCommand{
+		ValidFrom: time.Now(),
+		Validity:  10 * time.Hour,
+		IP:        "another-computer",
+		Content:   "4",
+	})
+	if _, err := server.KeyDB.Upsert(rec); err != nil {
+		t.Fatal(err)
+	}
+	// Poll action should only receive the first command - valid yet unseen
+	cmds, err = client.PollCommand(PollCommandReq{
+		UUIDs: []string{"a-a-a-a", "this-does-not-exist"},
+	})
+	if err != nil || len(cmds.Commands) != 1 {
+		t.Fatal(err, cmds.Commands)
+	}
+	if !reflect.DeepEqual(cmds.Commands["a-a-a-a"], []keydb.PendingCommand{cmd1}) {
+		t.Fatalf("\n%+v\n%+v\n", []keydb.PendingCommand{cmd1}, cmds.Commands)
+	}
+	// Polled command is now marked as seen
+	rec, _ = server.KeyDB.GetByUUID("a-a-a-a")
+	if cmd1 := rec.PendingCommands["127.0.0.1"][0]; !cmd1.SeenByClient {
+		t.Fatal(cmd1)
+	}
+	// There are no more commands to be polled
+	cmds, err = client.PollCommand(PollCommandReq{
+		UUIDs: []string{"a-a-a-a", "this-does-not-exist"},
+	})
+	if err != nil || len(cmds.Commands) > 0 {
+		t.Fatal(err, cmds.Commands)
+	}
+	// Record a result for a still valid command
+	if err := client.SaveCommandResult(SaveCommandResultReq{
+		UUID:           "a-a-a-a",
+		CommandContent: "1",
+		Result:         "result 1",
 	}); err != nil {
-		b.Fatal(err)
+		t.Fatal(err)
 	}
-	b.ResetTimer()
-	// The benchmark will run all RPC operations consecutively
-	for i := 0; i < b.N; i++ {
-		if resp, err := client.AutoRetrieveKey(AutoRetrieveKeyReq{
-			UUIDs:    []string{"aaa"},
-			Hostname: "localhost",
-		}); err != nil || len(resp.Granted) != 1 {
-			b.Fatal(err, resp)
-		}
+	rec, _ = server.KeyDB.GetByUUID("a-a-a-a")
+	if cmd1 := rec.PendingCommands["127.0.0.1"][0]; !cmd1.SeenByClient || cmd1.ClientResult != "result 1" {
+		t.Fatal(cmd1)
 	}
-	b.StopTimer()
-}
-
-func BenchmarkManualRetrieveKey(b *testing.B) {
-	client, tearDown := StartTestServer(b)
-	defer tearDown(b)
-	// Retrieve server's password salt
-	salt, err := client.GetSalt()
-	if err != nil {
-		b.Fatal(err)
-	}
-	// Run all transactions in a single goroutine
-	oldMaxprocs := runtime.GOMAXPROCS(-1)
-	defer runtime.GOMAXPROCS(oldMaxprocs)
-	runtime.GOMAXPROCS(1)
-	if _, err := client.CreateKey(CreateKeyReq{
-		Password:         HashPassword(salt, TEST_RPC_PASS),
-		Hostname:         "localhost",
-		UUID:             "aaa",
-		MountPoint:       "/a",
-		MountOptions:     []string{"ro", "noatime"},
-		MaxActive:        -1,
-		AliveIntervalSec: 1,
-		AliveCount:       4,
+	// Saving result for a non-existent command should not crash anything
+	if err := client.SaveCommandResult(SaveCommandResultReq{
+		UUID:           "a-a-a-a",
+		CommandContent: "does-not-exist",
+		Result:         "dummy-result",
 	}); err != nil {
-		b.Fatal(err)
+		t.Fatal(err)
 	}
-	b.ResetTimer()
-	// The benchmark will run all RPC operations consecutively
-	for i := 0; i < b.N; i++ {
-		if resp, err := client.ManualRetrieveKey(ManualRetrieveKeyReq{
-			Password: HashPassword(salt, TEST_RPC_PASS),
-			UUIDs:    []string{"aaa"},
-			Hostname: "localhost",
-		}); err != nil || len(resp.Granted) != 1 {
-			b.Fatal(err, resp)
-		}
+	// All expired commands should have been cleared when a command result was saved, only cmd1 and cmd3 are left.
+	if len(rec.PendingCommands["127.0.0.1"]) != 2 {
+		t.Fatal(rec.PendingCommands)
 	}
-	b.StopTimer()
-}
-
-func BenchmarkReportAlive(b *testing.B) {
-	client, tearDown := StartTestServer(b)
-	defer tearDown(b)
-	// Retrieve server's password salt
-	salt, err := client.GetSalt()
-	if err != nil {
-		b.Fatal(err)
-	}
-	// Run all benchmark operations in a single goroutine to know the real performance
-	oldMaxprocs := runtime.GOMAXPROCS(-1)
-	defer runtime.GOMAXPROCS(oldMaxprocs)
-	runtime.GOMAXPROCS(1)
-	if _, err := client.CreateKey(CreateKeyReq{
-		Password:         HashPassword(salt, TEST_RPC_PASS),
-		Hostname:         "localhost",
-		UUID:             "aaa",
-		MountPoint:       "/a",
-		MountOptions:     []string{"ro", "noatime"},
-		MaxActive:        -1,
-		AliveIntervalSec: 1,
-		AliveCount:       4,
-	}); err != nil {
-		b.Fatal(err)
-	}
-	// Retrieve the key so that this computer becomes eligible to send alive messages
-	if resp, err := client.ManualRetrieveKey(ManualRetrieveKeyReq{
-		Password: HashPassword(salt, TEST_RPC_PASS),
-		UUIDs:    []string{"aaa"},
-		Hostname: "localhost",
-	}); err != nil || len(resp.Granted) != 1 {
-		b.Fatal(err, resp)
-	}
-	b.ResetTimer()
-	// The benchmark will run all RPC operations consecutively
-	for i := 0; i < b.N; i++ {
-		if rejected, err := client.ReportAlive(ReportAliveReq{
-			UUIDs:    []string{"aaa"},
-			Hostname: "localhost",
-		}); err != nil || len(rejected) > 0 {
-			b.Fatal(err, rejected)
-		}
-	}
-	b.StopTimer()
 }
